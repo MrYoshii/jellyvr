@@ -23,7 +23,7 @@
                     <div class="fieldDescription">How long links in a loaded library stay valid. Stream links always expire after the video runtime + 2 hours.</div>
                 </div>
                 <div class="inputContainer">
-                    <input is="emby-input" type="number" id="MaxItemsPerLibrary" min="1" label="Max. items per library" />
+                    <input is="emby-input" type="number" id="MaxItemsPerLibrary" min="1" max="5000" label="Max. items per library (newest first, up to 5000)" />
                 </div>
                 <div class="checkboxContainer">
                     <label>
@@ -33,7 +33,7 @@
                 </div>
                 <div class="inputContainer">
                     <input is="emby-input" type="text" id="SigningSecret" label="Signing secret" />
-                    <div class="fieldDescription">Changing it invalidates all feed links and all active stream links.</div>
+                    <div class="fieldDescription">At least 32 characters; shorter values are replaced by a random secret. Changing it invalidates all feed links and all active stream links.</div>
                 </div>
                 <button is="emby-button" type="submit" class="raised button-submit block emby-button">
                     <span>Save</span>

@@ -65,6 +65,7 @@ def update(a):
         "checksum": a.md5,
         "timestamp": now(),
     })
+    versions.sort(key=lambda v: tuple(int(x) for x in v["version"].split(".")), reverse=True)
     plugin["versions"] = versions
 
     with open(MANIFEST, "w", encoding="utf-8") as f:

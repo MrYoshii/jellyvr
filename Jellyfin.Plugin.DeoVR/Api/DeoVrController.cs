@@ -8,6 +8,7 @@ using System.Text;
 using System.Text.Json;
 using System.Threading.Tasks;
 using Jellyfin.Data;
+using Jellyfin.Data.Enums;
 using Jellyfin.Database.Implementations.Entities;
 using Jellyfin.Database.Implementations.Enums;
 using Jellyfin.Plugin.DeoVR.Configuration;
@@ -115,7 +116,7 @@ public class DeoVrController : ControllerBase
             return StatusCode(403);
         }
 
-        if (item is not Video video || !item.IsVisible(user) || !IsPlayableFile(video))
+        if (item is not Video video || !item.IsVisibleStandalone(user) || !IsPlayableFile(video))
         {
             return NotFound();
         }
@@ -172,7 +173,7 @@ public class DeoVrController : ControllerBase
             return StatusCode(403);
         }
 
-        if (item is not Video video || !item.IsVisible(user) || !IsPlayableFile(video))
+        if (item is not Video video || !item.IsVisibleStandalone(user) || !IsPlayableFile(video))
         {
             return NotFound();
         }
@@ -207,25 +208,20 @@ public class DeoVrController : ControllerBase
         }
 
         var baseUrl = GetBaseUrl();
-        var max = Math.Max(1, Config.MaxItemsPerLibrary);
-        var all3d = new List<BaseItem>();
+        var max = Math.Clamp(Config.MaxItemsPerLibrary, 1, 5000);
+        var all3d = new List<Video>();
         var seen = new HashSet<Guid>();
 
+        // Work per request is bounded by `max`: sorting and limiting happen in the library query,
+        // and no per-file filesystem access is done while building the feed.
         foreach (var view in _libraryManager.GetUserRootFolder().GetChildren(user, true).OfType<Folder>())
         {
             List<Video> videos;
             try
             {
-                videos = view.GetItemList(new InternalItemsQuery(user)
-                    {
-                        Recursive = true,
-                        IsFolder = false,
-                        IsVirtualItem = false
-                    })
-                    .OfType<Video>()
-                    .Where(IsPlayableFile)
-                    .OrderByDescending(v => v.DateCreated)
-                    .ToList();
+                var query = VideoQuery(user, max);
+                query.OrderBy = new[] { (ItemSortBy.DateCreated, SortOrder.Descending) };
+                videos = view.GetItemList(query).OfType<Video>().Where(IsListable).ToList();
             }
             catch (Exception ex)
             {
@@ -249,20 +245,42 @@ public class DeoVrController : ControllerBase
             feed.Scenes.Add(new DeoVrScene
             {
                 Name = view.Name,
-                List = videos.Take(max).Select(v => ToListEntry(baseUrl, v, userId)).ToList()
+                List = videos.Select(v => ToListEntry(baseUrl, v, userId)).ToList()
             });
         }
 
-        if (Config.Show3DScene && all3d.Count > 0)
+        if (Config.Show3DScene)
         {
-            feed.Scenes.Insert(0, new DeoVrScene
+            try
             {
-                Name = "3D",
-                List = all3d.OrderBy(v => v.SortName ?? v.Name, StringComparer.OrdinalIgnoreCase)
-                    .Take(max)
-                    .Select(v => ToListEntry(baseUrl, v, userId))
-                    .ToList()
-            });
+                // Items Jellyfin itself flags as 3D (bounded), in addition to the ones detected above.
+                var query = VideoQuery(user, max);
+                query.Is3D = true;
+                query.OrderBy = new[] { (ItemSortBy.SortName, SortOrder.Ascending) };
+                foreach (var v in _libraryManager.GetItemList(query).OfType<Video>().Where(IsListable))
+                {
+                    if (v.IsVisibleStandalone(user) && seen.Add(v.Id))
+                    {
+                        all3d.Add(v);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "DeoVR: failed to query 3D items");
+            }
+
+            if (all3d.Count > 0)
+            {
+                feed.Scenes.Insert(0, new DeoVrScene
+                {
+                    Name = "3D",
+                    List = all3d.OrderBy(v => v.SortName ?? v.Name, StringComparer.OrdinalIgnoreCase)
+                        .Take(max)
+                        .Select(v => ToListEntry(baseUrl, v, userId))
+                        .ToList()
+                });
+            }
         }
 
         return feed;
@@ -404,6 +422,7 @@ public class DeoVrController : ControllerBase
 
     private static byte[] Hmac(string data)
     {
+        Plugin.Instance!.EnsureSigningSecret();
         using var h = new HMACSHA256(Encoding.UTF8.GetBytes(Config.SigningSecret));
         return h.ComputeHash(Encoding.UTF8.GetBytes(data));
     }
@@ -431,7 +450,7 @@ public class DeoVrController : ControllerBase
 
     /// <summary>Expiry for list entries (video JSON links): configured link lifetime.</summary>
     private static long ListExpiry()
-        => DateTimeOffset.UtcNow.AddHours(Math.Max(1, Config.LinkLifetimeHours)).ToUnixTimeSeconds();
+        => DateTimeOffset.UtcNow.AddHours(Math.Clamp(Config.LinkLifetimeHours, 1, 24 * 30)).ToUnixTimeSeconds();
 
     /// <summary>
     /// Expiry for stream links: runtime + 2 h (room for pauses and seeking).
@@ -439,7 +458,7 @@ public class DeoVrController : ControllerBase
     /// </summary>
     private static long StreamExpiry(BaseItem item)
     {
-        var runtime = RuntimeSeconds(item);
+        var runtime = Math.Min(RuntimeSeconds(item), 24 * 3600);
         return runtime > 0
             ? DateTimeOffset.UtcNow.AddSeconds(runtime).AddHours(2).ToUnixTimeSeconds()
             : ListExpiry();
@@ -455,11 +474,17 @@ public class DeoVrController : ControllerBase
 
     /// <summary>
     /// Enforce the Jellyfin user policy the normal login would enforce:
-    /// disabled users, "allow media playback" and "allow remote access".
+    /// disabled users, "allow media playback", parental access schedule and "allow remote access".
     /// </summary>
     private bool IsUserAllowed(User user)
     {
         if (user.HasPermission(PermissionKind.IsDisabled) || !user.HasPermission(PermissionKind.EnableMediaPlayback))
+        {
+            return false;
+        }
+
+        // Parental access schedule, as enforced by Jellyfin's login and per-request authorization.
+        if (!user.HasPermission(PermissionKind.IsAdministrator) && !user.IsParentalScheduleAllowed())
         {
             return false;
         }
@@ -482,6 +507,22 @@ public class DeoVrController : ControllerBase
 
         return $"{Request.Scheme}://{Request.Host}{Request.PathBase}".TrimEnd('/');
     }
+
+    private static InternalItemsQuery VideoQuery(User user, int limit) => new(user)
+    {
+        Recursive = true,
+        IsFolder = false,
+        IsVirtualItem = false,
+        IncludeItemTypes = new[] { BaseItemKind.Movie, BaseItemKind.Episode, BaseItemKind.Video, BaseItemKind.MusicVideo },
+        VideoTypes = new[] { VideoType.VideoFile },
+        Limit = limit
+    };
+
+    /// <summary>Cheap check for feed entries (no filesystem access). The file itself is checked on playback.</summary>
+    private static bool IsListable(Video v)
+        => v.VideoType == VideoType.VideoFile
+           && !string.IsNullOrEmpty(v.Path)
+           && !v.Path.EndsWith(".strm", StringComparison.OrdinalIgnoreCase);
 
     private static bool IsPlayableFile(Video v)
         => v.VideoType == VideoType.VideoFile

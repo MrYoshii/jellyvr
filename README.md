@@ -65,8 +65,10 @@ MVC 3D (Blu-ray frame packing) is not supported by DeoVR and plays as 2D.
 - No Jellyfin API keys or session tokens in URLs. Video and stream URLs are **HMAC-SHA256 signed and expire**: library entries after the configured link lifetime (default 24 h), stream links after the video runtime + 2 h.
 - A signed link grants access to exactly one file for one user. It gives no access to the Jellyfin API.
 - Feed keys are 80-bit HMAC values derived from the signing secret and the user ID.
-- On every request the plugin enforces the user's Jellyfin policy: disabled users, *Allow media playback*, *Allow remote connections* (otherwise LAN only), library access and parental ratings.
+- On every request the plugin enforces the user's Jellyfin policy: disabled users, *Allow media playback*, parental access schedule, *Allow remote connections* (otherwise LAN only). Single items are checked with Jellyfin's full visibility check (library access and parental ratings, including inherited ones).
 - File paths come from the Jellyfin database only, never from the request.
+- Building a feed does bounded work: sorting and the item limit are applied in the library query, and no per-file disk access happens until a video is played.
+- The signing secret is always at least 32 characters; a missing or shorter value is replaced by a random one.
 - `/deovr/admin/links` requires an administrator.
 - Logins go through Jellyfin's own `AuthenticateUser`.
 
@@ -99,7 +101,7 @@ Output: `dist/DeoVR_1.0.0.0/Jellyfin.Plugin.DeoVR.dll`
 git tag v1.0.0
 git push origin v1.0.0
 ```
-GitHub Actions builds the plugin, attaches `deovr_<version>.zip` to the release and updates `manifest.json` on `main`.
+GitHub Actions builds the plugin, attaches `deovr_<version>.zip` (plus a `.sha256` file) to the release and updates `manifest.json` on `main`. Only tags of the form `vX.Y.Z` on commits contained in `main` are released.
 
 ## License
 GPL-3.0
