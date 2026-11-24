@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
 using System.Linq;
+using System.Net.Http;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -15,9 +16,11 @@ using Jellyfin.Plugin.DeoVR.Configuration;
 using Jellyfin.Plugin.DeoVR.Models;
 using MediaBrowser.Common.Api;
 using MediaBrowser.Common.Net;
+using MediaBrowser.Controller.Configuration;
 using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Entities.TV;
 using MediaBrowser.Controller.Library;
+using MediaBrowser.Controller.Security;
 using MediaBrowser.Model.Entities;
 using MediaBrowser.Model.Net;
 using Microsoft.AspNetCore.Authorization;
@@ -40,7 +43,7 @@ namespace Jellyfin.Plugin.DeoVR.Api;
 /// </summary>
 [ApiController]
 [Route("deovr")]
-public class DeoVrController : ControllerBase
+public partial class DeoVrController : ControllerBase
 {
     private static readonly JsonSerializerOptions JsonOpts = new() { WriteIndented = false };
 
@@ -50,12 +53,25 @@ public class DeoVrController : ControllerBase
     private readonly IUserManager _userManager;
     private readonly INetworkManager _networkManager;
     private readonly ILogger<DeoVrController> _logger;
+    private readonly IHttpClientFactory _httpClientFactory;
+    private readonly IAuthenticationManager _authenticationManager;
+    private readonly IServerConfigurationManager _serverConfigurationManager;
 
     /// <summary>What kind of credentials the current request carried (for the request log; never the values).</summary>
     private string _credentials = "none";
 
-    public DeoVrController(ILibraryManager libraryManager, IUserManager userManager, INetworkManager networkManager, ILogger<DeoVrController> logger)
+    public DeoVrController(
+        ILibraryManager libraryManager,
+        IUserManager userManager,
+        INetworkManager networkManager,
+        IHttpClientFactory httpClientFactory,
+        IAuthenticationManager authenticationManager,
+        IServerConfigurationManager serverConfigurationManager,
+        ILogger<DeoVrController> logger)
     {
+        _httpClientFactory = httpClientFactory;
+        _authenticationManager = authenticationManager;
+        _serverConfigurationManager = serverConfigurationManager;
         _networkManager = networkManager;
         _libraryManager = libraryManager;
         _userManager = userManager;
@@ -232,23 +248,31 @@ public class DeoVrController : ControllerBase
             ScreenType = screenType,
             StereoMode = stereoMode,
             Is3d = stereoMode != "off",
-            ThumbnailUrl = ThumbUrl(baseUrl, item),
-            Encodings = new List<DeoVrEncoding>
-            {
-                new()
-                {
-                    Name = NormalizeCodec(videoStream?.Codec),
-                    VideoSources = new List<DeoVrVideoSource>
-                    {
-                        new()
-                        {
-                            Resolution = videoStream?.Height ?? item.Height,
-                            Url = SignedUrl(baseUrl, "s", item.Id, userId.Value, StreamExpiry(item), "/video" + StreamExtension(video))
-                        }
-                    }
-                }
-            }
+            ThumbnailUrl = ThumbUrl(baseUrl, item)
         };
+
+        var height = videoStream?.Height ?? item.Height;
+        var expiry = StreamExpiry(item);
+        if (OfferHls(video))
+        {
+            result.Encodings.Add(new DeoVrEncoding
+            {
+                Name = "Jellyfin (AAC audio)",
+                VideoSources = new List<DeoVrVideoSource>
+                {
+                    new() { Resolution = height, Url = HlsUrl(baseUrl, item.Id, userId.Value, expiry) }
+                }
+            });
+        }
+
+        result.Encodings.Add(new DeoVrEncoding
+        {
+            Name = OfferHls(video) ? "Original file" : NormalizeCodec(videoStream?.Codec),
+            VideoSources = new List<DeoVrVideoSource>
+            {
+                new() { Resolution = height, Url = SignedUrl(baseUrl, "s", item.Id, userId.Value, expiry, "/video" + StreamExtension(video)) }
+            }
+        });
 
         Trace("video", $"video sent: {screenType}/{stereoMode}, {result.Encodings[0].Name}, {result.Encodings[0].VideoSources[0].Resolution}p");
         return Json(result);
@@ -341,10 +365,24 @@ public class DeoVrController : ControllerBase
         // and no per-file filesystem access is done while building the feed.
         foreach (var view in _libraryManager.GetUserRootFolder().GetChildren(user, true).OfType<Folder>())
         {
+            List<Video> episodes;
             List<Video> videos;
             try
             {
+                // Episodes: one tab per series, in series / season / episode order.
+                var epQuery = VideoQuery(user, Math.Min(max * 20, 20000));
+                epQuery.IncludeItemTypes = new[] { BaseItemKind.Episode };
+                epQuery.OrderBy = new[]
+                {
+                    (ItemSortBy.SeriesSortName, SortOrder.Ascending),
+                    (ItemSortBy.ParentIndexNumber, SortOrder.Ascending),
+                    (ItemSortBy.IndexNumber, SortOrder.Ascending)
+                };
+                episodes = view.GetItemList(epQuery).OfType<Video>().Where(IsListable).ToList();
+
+                // Everything else (movies, videos): one tab per library, newest first.
                 var query = VideoQuery(user, max);
+                query.IncludeItemTypes = new[] { BaseItemKind.Movie, BaseItemKind.Video, BaseItemKind.MusicVideo };
                 query.OrderBy = new[] { (ItemSortBy.DateCreated, SortOrder.Descending) };
                 videos = view.GetItemList(query).OfType<Video>().Where(IsListable).ToList();
             }
@@ -354,12 +392,7 @@ public class DeoVrController : ControllerBase
                 continue;
             }
 
-            if (videos.Count == 0)
-            {
-                continue;
-            }
-
-            foreach (var v in videos)
+            foreach (var v in episodes.Concat(videos))
             {
                 if (DetectProjection(v).StereoMode != "off" && seen.Add(v.Id))
                 {
@@ -367,11 +400,24 @@ public class DeoVrController : ControllerBase
                 }
             }
 
-            feed.Scenes.Add(new DeoVrScene
+            foreach (var series in episodes.OfType<Episode>().GroupBy(ep => ep.SeriesId))
             {
-                Name = view.Name,
-                List = videos.Select(v => ToListEntry(baseUrl, v, userId)).ToList()
-            });
+                var list = series.ToList();
+                feed.Scenes.Add(new DeoVrScene
+                {
+                    Name = list[0].SeriesName ?? view.Name,
+                    List = list.Take(max).Select(ep => ToListEntry(baseUrl, ep, userId, inSeriesTab: true)).ToList()
+                });
+            }
+
+            if (videos.Count > 0)
+            {
+                feed.Scenes.Add(new DeoVrScene
+                {
+                    Name = view.Name,
+                    List = videos.Select(v => ToListEntry(baseUrl, v, userId)).ToList()
+                });
+            }
         }
 
         if (Config.Show3DScene)
@@ -411,9 +457,9 @@ public class DeoVrController : ControllerBase
         return feed;
     }
 
-    private DeoVrListEntry ToListEntry(string baseUrl, BaseItem item, Guid userId) => new()
+    private DeoVrListEntry ToListEntry(string baseUrl, BaseItem item, Guid userId, bool inSeriesTab = false) => new()
     {
-        Title = BuildTitle(item),
+        Title = BuildTitle(item, inSeriesTab),
         VideoLength = RuntimeSeconds(item),
         ThumbnailUrl = ThumbUrl(baseUrl, item),
         VideoUrl = SignedUrl(baseUrl, "v", item.Id, userId, ListExpiry())
@@ -757,13 +803,13 @@ public class DeoVrController : ControllerBase
         _ => "h264"
     };
 
-    private static string BuildTitle(BaseItem item)
+    private static string BuildTitle(BaseItem item, bool inSeriesTab = false)
     {
         if (item is Episode ep)
         {
             var s = ep.ParentIndexNumber?.ToString("00", CultureInfo.InvariantCulture) ?? "00";
             var e = ep.IndexNumber?.ToString("00", CultureInfo.InvariantCulture) ?? "00";
-            return $"{ep.SeriesName} – S{s}E{e} – {ep.Name}";
+            return inSeriesTab ? $"S{s}E{e} – {ep.Name}" : $"{ep.SeriesName} – S{s}E{e} – {ep.Name}";
         }
 
         return item.ProductionYear.HasValue ? $"{item.Name} ({item.ProductionYear})" : item.Name;

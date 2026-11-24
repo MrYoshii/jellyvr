@@ -5,7 +5,7 @@
     <title>DeoVR</title>
 </head>
 <body>
-<div id="DeoVrConfigPage" data-role="page" class="page type-interior pluginConfigurationPage" data-require="emby-input,emby-button,emby-checkbox">
+<div id="DeoVrConfigPage" data-role="page" class="page type-interior pluginConfigurationPage" data-require="emby-input,emby-button,emby-checkbox,emby-select">
     <div data-role="content">
         <div class="content-primary">
             <h2>DeoVR</h2>
@@ -24,6 +24,19 @@
                 </div>
                 <div class="inputContainer">
                     <input is="emby-input" type="number" id="MaxItemsPerLibrary" min="1" max="5000" label="Max. items per library (newest first, up to 5000)" />
+                </div>
+                <div class="selectContainer">
+                    <label class="selectLabel" for="AudioTranscoding">Audio conversion</label>
+                    <select is="emby-select" id="AudioTranscoding" class="emby-select-withcolor emby-select">
+                        <option value="Auto">Auto - when DeoVR cannot play the original (MKV, EAC3, DTS, TrueHD ...)</option>
+                        <option value="Always">Always</option>
+                        <option value="Never">Never - original file only</option>
+                    </select>
+                    <div class="fieldDescription">Adds a stream with AAC stereo audio made by Jellyfin's transcoder; the video is copied when possible. Uses Jellyfin's transcoding settings and hardware acceleration.</div>
+                </div>
+                <div class="inputContainer">
+                    <input is="emby-input" type="text" id="InternalJellyfinUrl" label="Internal Jellyfin address (optional)" />
+                    <div class="fieldDescription">Address the plugin uses to reach this Jellyfin server for audio conversion. Leave empty for http://127.0.0.1 and the configured HTTP port.</div>
                 </div>
                 <div class="checkboxContainer">
                     <label>
@@ -111,6 +124,8 @@
                     page.querySelector('#LinkLifetimeHours').value = c.LinkLifetimeHours;
                     page.querySelector('#MaxItemsPerLibrary').value = c.MaxItemsPerLibrary;
                     page.querySelector('#Show3DScene').checked = !!c.Show3DScene;
+                    page.querySelector('#AudioTranscoding').value = c.AudioTranscoding || 'Auto';
+                    page.querySelector('#InternalJellyfinUrl').value = c.InternalJellyfinUrl || '';
                     page.querySelector('#SigningSecret').value = c.SigningSecret || '';
                     Dashboard.hideLoadingMsg();
                 });
@@ -127,6 +142,8 @@
                     c.LinkLifetimeHours = parseInt(page.querySelector('#LinkLifetimeHours').value, 10) || 24;
                     c.MaxItemsPerLibrary = parseInt(page.querySelector('#MaxItemsPerLibrary').value, 10) || 1000;
                     c.Show3DScene = page.querySelector('#Show3DScene').checked;
+                    c.AudioTranscoding = page.querySelector('#AudioTranscoding').value;
+                    c.InternalJellyfinUrl = page.querySelector('#InternalJellyfinUrl').value.trim();
                     c.SigningSecret = page.querySelector('#SigningSecret').value.trim() || c.SigningSecret;
                     ApiClient.updatePluginConfiguration(pluginId, c).then(function (r) {
                         Dashboard.processPluginConfigurationUpdateResult(r);
