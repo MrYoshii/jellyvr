@@ -59,15 +59,21 @@ public class DeoVrController : ControllerBase
 
     // ------------------------------------------------------------------ library
 
+    /// <summary>DeoVR probes the site with HEAD before requesting the library.</summary>
+    [AllowAnonymous]
+    [HttpHead]
+    [HttpHead("f/{key}")]
+    public IActionResult Probe() => Json(UnauthorizedFeed("0"));
+
     [AllowAnonymous]
     [HttpGet]
     [HttpPost]
     public async Task<IActionResult> GetLibrary()
     {
-        Guid? userId = await AuthenticateFromRequest().ConfigureAwait(false);
+        var (userId, state) = await AuthenticateFromRequest().ConfigureAwait(false);
         if (userId is null)
         {
-            return Json(new DeoVrFeed { Authorized = "-1" });
+            return Json(UnauthorizedFeed(state));
         }
 
         return Json(BuildFeed(userId.Value));
@@ -81,11 +87,24 @@ public class DeoVrController : ControllerBase
         var user = _userManager.GetUsers().FirstOrDefault(u => FixedEquals(FeedKey(u.Id), key));
         if (user is null)
         {
-            return Json(new DeoVrFeed { Authorized = "-1" });
+            return Json(UnauthorizedFeed("-1"));
         }
 
         return Json(BuildFeed(user.Id));
     }
+
+    /// <summary>
+    /// Library answer for unauthenticated requests, in the shape DeoVR expects:
+    /// "0" = login required (DeoVR asks for login/password), "-1" = login failed.
+    /// </summary>
+    private static DeoVrFeed UnauthorizedFeed(string state) => new()
+    {
+        Authorized = state,
+        Scenes = new List<DeoVrScene>
+        {
+            new() { Name = state == "-1" ? "Login Failed" : "Login Required" }
+        }
+    };
 
     // ------------------------------------------------------------------ single video
 
@@ -94,19 +113,19 @@ public class DeoVrController : ControllerBase
     [HttpPost("v/{itemId}")]
     public async Task<IActionResult> GetVideo([FromRoute] Guid itemId, [FromQuery] Guid? u, [FromQuery] long? e, [FromQuery] string? s)
     {
-        Guid? userId = null;
+        Guid? userId;
         if (u.HasValue && e.HasValue && !string.IsNullOrEmpty(s) && VerifyLink("v", itemId, u.Value, e.Value, s))
         {
             userId = u.Value;
         }
         else
         {
-            userId = await AuthenticateFromRequest().ConfigureAwait(false);
-        }
-
-        if (userId is null)
-        {
-            return StatusCode(403);
+            string state;
+            (userId, state) = await AuthenticateFromRequest().ConfigureAwait(false);
+            if (userId is null)
+            {
+                return Json(UnauthorizedFeed(state));
+            }
         }
 
         var user = _userManager.GetUserById(userId.Value);
@@ -364,7 +383,11 @@ public class DeoVrController : ControllerBase
 
     // ------------------------------------------------------------------ auth / signing
 
-    private async Task<Guid?> AuthenticateFromRequest()
+    /// <summary>
+    /// Returns the authenticated user and the DeoVR auth state:
+    /// "1" = ok, "0" = no credentials sent, "-1" = login failed.
+    /// </summary>
+    private async Task<(Guid? UserId, string State)> AuthenticateFromRequest()
     {
         string? login = null;
         string? password = null;
@@ -397,7 +420,7 @@ public class DeoVrController : ControllerBase
                 var user = await _userManager.AuthenticateUser(login, password ?? string.Empty, remote, false).ConfigureAwait(false);
                 if (user is not null)
                 {
-                    return user.Id;
+                    return (user.Id, "1");
                 }
             }
             catch (Exception ex)
@@ -405,7 +428,7 @@ public class DeoVrController : ControllerBase
                 _logger.LogInformation("DeoVR: login failed for {Login}: {Message}", login, ex.Message);
             }
 
-            return null;
+            return (null, "-1");
         }
 
         if (!string.IsNullOrWhiteSpace(Config.AnonymousUserName))
@@ -413,11 +436,11 @@ public class DeoVrController : ControllerBase
             var anon = _userManager.GetUserByName(Config.AnonymousUserName.Trim());
             if (anon is not null)
             {
-                return anon.Id;
+                return (anon.Id, "1");
             }
         }
 
-        return null;
+        return (null, "0");
     }
 
     private static byte[] Hmac(string data)
