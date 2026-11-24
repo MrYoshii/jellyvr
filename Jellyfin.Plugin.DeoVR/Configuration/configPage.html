@@ -38,12 +38,12 @@
                     <input is="emby-input" type="text" id="InternalJellyfinUrl" label="Internal Jellyfin address (optional)" />
                     <div class="fieldDescription">Address the plugin uses to reach this Jellyfin server for audio conversion. Leave empty for http://127.0.0.1 and the configured HTTP port.</div>
                 </div>
-                <div class="selectContainer">
-                    <label class="selectLabel" for="SeriesView">TV shows</label>
-                    <select is="emby-select" id="SeriesView" class="emby-select-withcolor emby-select">
-                        <option value="List">One tab, sorted by series, season and episode</option>
-                        <option value="Off">Off - do not show TV shows</option>
-                    </select>
+                <div class="checkboxContainer">
+                    <label>
+                        <input is="emby-checkbox" type="checkbox" id="ShowTvShows" />
+                        <span>Show TV shows (one tab per library with all episodes, sorted by series, season and episode)</span>
+                    </label>
+                    <div class="fieldDescription">DeoVR has no folders, so series and seasons cannot be shown as separate pages.</div>
                 </div>
                 <div class="checkboxContainer">
                     <label>
@@ -154,7 +154,7 @@
                     page.querySelector('#LinkLifetimeHours').value = c.LinkLifetimeHours;
                     page.querySelector('#MaxItemsPerLibrary').value = c.MaxItemsPerLibrary;
                     page.querySelector('#Show3DScene').checked = !!c.Show3DScene;
-                    page.querySelector('#SeriesView').value = (c.SeriesView === 'Off') ? 'Off' : 'List';
+                    page.querySelector('#ShowTvShows').checked = !!c.ShowTvShows;
                     page.querySelector('#ExpandHalf3D').checked = c.ExpandHalf3D !== false;
                     page.querySelector('#LanBaseUrl').value = c.LanBaseUrl || '';
                     page.querySelector('#LanMode').value = c.LanMode || 'Auto';
@@ -177,7 +177,7 @@
                     c.LinkLifetimeHours = parseInt(page.querySelector('#LinkLifetimeHours').value, 10) || 24;
                     c.MaxItemsPerLibrary = parseInt(page.querySelector('#MaxItemsPerLibrary').value, 10) || 1000;
                     c.Show3DScene = page.querySelector('#Show3DScene').checked;
-                    c.SeriesView = page.querySelector('#SeriesView').value;
+                    c.ShowTvShows = page.querySelector('#ShowTvShows').checked;
                     c.ExpandHalf3D = page.querySelector('#ExpandHalf3D').checked;
                     c.LanBaseUrl = page.querySelector('#LanBaseUrl').value.trim();
                     c.LanMode = page.querySelector('#LanMode').value;

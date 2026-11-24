@@ -293,76 +293,6 @@ public partial class DeoVrController : ControllerBase
         return Json(result);
     }
 
-    // ------------------------------------------------------------------ series folder
-
-    /// <summary>Opened from a series tile: one tab per season, episodes in order.</summary>
-    [AllowAnonymous]
-    [HttpGet("g/{seriesId}")]
-    [HttpPost("g/{seriesId}")]
-    [HttpHead("g/{seriesId}")]
-    public IActionResult GetSeries([FromRoute] Guid seriesId, [FromQuery] Guid? u, [FromQuery] long? e, [FromQuery] string? s)
-    {
-        if (!u.HasValue || !e.HasValue || string.IsNullOrEmpty(s) || !VerifyLink("g", seriesId, u.Value, e.Value, s))
-        {
-            Trace("series", "link expired or invalid (placeholder sent)");
-            return Json(PlaceholderFeed("-1", "Link expired", "Link expired - reload the library"));
-        }
-
-        var user = _userManager.GetUserById(u.Value);
-        if (user is null || !IsUserAllowed(user))
-        {
-            Trace("series", "user not allowed (placeholder sent)");
-            return Json(PlaceholderFeed("-1", "Access denied", "Access denied"));
-        }
-
-        var series = _libraryManager.GetItemById(seriesId);
-        if (series is not Series || !series.IsVisibleStandalone(user))
-        {
-            Trace("series", "404 series not found or not visible");
-            return NotFound();
-        }
-
-        var query = VideoQuery(user, 5000);
-        query.AncestorIds = new[] { seriesId };
-        query.IncludeItemTypes = new[] { BaseItemKind.Episode };
-        query.OrderBy = new[]
-        {
-            (ItemSortBy.ParentIndexNumber, SortOrder.Ascending),
-            (ItemSortBy.IndexNumber, SortOrder.Ascending)
-        };
-        var episodes = _libraryManager.GetItemList(query).OfType<Episode>().Where(IsListable).ToList();
-
-        var baseUrl = GetBaseUrl();
-        var feed = new DeoVrFeed();
-        foreach (var season in episodes.GroupBy(ep => ep.ParentIndexNumber ?? -1))
-        {
-            var first = season.First();
-            var name = !string.IsNullOrWhiteSpace(first.SeasonName)
-                ? first.SeasonName
-                : season.Key switch { 0 => "Specials", -1 => series.Name, _ => $"Season {season.Key}" };
-            feed.Scenes.Add(new DeoVrScene
-            {
-                Name = name,
-                List = season.Select(ep => new DeoVrListEntry
-                {
-                    Title = $"E{ep.IndexNumber?.ToString("00", CultureInfo.InvariantCulture) ?? "??"} – {ep.Name}",
-                    VideoLength = RuntimeSeconds(ep),
-                    ThumbnailUrl = ThumbUrl(baseUrl, ep),
-                    VideoUrl = SignedUrl(baseUrl, "v", ep.Id, u.Value, ListExpiry())
-                }).ToList()
-            });
-        }
-
-        if (feed.Scenes.Count == 0)
-        {
-            Trace("series", "no playable episodes (placeholder sent)");
-            return Json(PlaceholderFeed("1", series.Name, "No playable episodes"));
-        }
-
-        Trace("series", Describe(feed));
-        return Json(feed);
-    }
-
     // ------------------------------------------------------------------ stream
 
     [AllowAnonymous]
@@ -451,33 +381,20 @@ public partial class DeoVrController : ControllerBase
         foreach (var view in _libraryManager.GetUserRootFolder().GetChildren(user, true).OfType<Folder>())
         {
             List<Video> episodes = new();
-            List<BaseItem> seriesList = new();
             List<Video> videos;
             try
             {
-                if (Config.SeriesView == "Folders-Experimental")
+                if (Config.ShowTvShows)
                 {
-                    // One tile per series; opening it lists the seasons (see GetSeries).
-                    seriesList = view.GetItemList(new InternalItemsQuery(user)
+                    // DeoVR has no folders: all episodes in one tab, in series / season / episode order.
+                    var epQuery = VideoQuery(user, max);
+                    epQuery.IncludeItemTypes = new[] { BaseItemKind.Episode };
+                    epQuery.OrderBy = new[]
                     {
-                        Recursive = true,
-                        IncludeItemTypes = new[] { BaseItemKind.Series },
-                        OrderBy = new[] { (ItemSortBy.SortName, SortOrder.Ascending) },
-                        Limit = max
-                    }).ToList();
-                }
-
-                // Episodes in series / season / episode order (flat list mode).
-                var epQuery = VideoQuery(user, max);
-                epQuery.IncludeItemTypes = new[] { BaseItemKind.Episode };
-                epQuery.OrderBy = new[]
-                {
-                    (ItemSortBy.SeriesSortName, SortOrder.Ascending),
-                    (ItemSortBy.ParentIndexNumber, SortOrder.Ascending),
-                    (ItemSortBy.IndexNumber, SortOrder.Ascending)
-                };
-                if (seriesList.Count == 0 && Config.SeriesView != "Off")
-                {
+                        (ItemSortBy.SeriesSortName, SortOrder.Ascending),
+                        (ItemSortBy.ParentIndexNumber, SortOrder.Ascending),
+                        (ItemSortBy.IndexNumber, SortOrder.Ascending)
+                    };
                     episodes = view.GetItemList(epQuery).OfType<Video>().Where(IsListable).ToList();
                 }
 
@@ -501,21 +418,6 @@ public partial class DeoVrController : ControllerBase
                 }
             }
 
-            if (seriesList.Count > 0)
-            {
-                feed.Scenes.Add(new DeoVrScene
-                {
-                    Name = view.Name,
-                    List = seriesList.Select(x => new DeoVrListEntry
-                    {
-                        Title = x.ProductionYear.HasValue ? $"{x.Name} ({x.ProductionYear})" : x.Name,
-                        VideoLength = 0,
-                        ThumbnailUrl = ThumbUrl(baseUrl, x),
-                        VideoUrl = SignedUrl(baseUrl, "g", x.Id, userId, ListExpiry())
-                    }).ToList()
-                });
-            }
-
             if (episodes.Count > 0)
             {
                 // One tab per library, sorted by series, season and episode (one tab per series gets unusable).
@@ -530,7 +432,7 @@ public partial class DeoVrController : ControllerBase
             {
                 feed.Scenes.Add(new DeoVrScene
                 {
-                    Name = episodes.Count > 0 || seriesList.Count > 0 ? view.Name + " – Videos" : view.Name,
+                    Name = episodes.Count > 0 ? view.Name + " – Videos" : view.Name,
                     List = videos.Select(v => ToListEntry(baseUrl, v, userId)).ToList()
                 });
             }

@@ -12,7 +12,7 @@ Watch your Jellyfin library in [DeoVR](https://deovr.com): regular movies on a 2
 
 - Requires Jellyfin **12.4** or newer (.NET 10).
 - The original file is streamed with HTTP range support. When DeoVR cannot play it (MKV, or audio such as EAC3, DTS, TrueHD), an extra stream with AAC stereo audio is offered via Jellyfin's own transcoder (HLS, video copied when possible). Setting: *Audio conversion* (Auto / Always / Never).
-- TV shows: one tab per library, sorted by series, season and episode (setting *TV shows*: List / Off). DeoVR has no folders, so nested series/season views are not possible.
+- TV shows are off by default. When enabled (*Show TV shows*), each library gets one tab with all episodes, sorted by series, season and episode.
 - Half side-by-side / top-bottom 3D (HSBS, HTAB): an extra stream scaled to full size per eye, so faces are not squeezed (uses Jellyfin video transcoding; can be turned off).
 - Streaming over LAN: optional LAN address for video streams of players in your network, so they do not go through the internet / reverse proxy.
 
@@ -88,6 +88,7 @@ MVC 3D (Blu-ray frame packing) is not supported by DeoVR and plays as 2D.
 - Logins go through Jellyfin's own `AuthenticateUser`.
 
 Known limitations:
+- DeoVR has no folders: series and seasons cannot be opened as separate pages, only shown as one long sorted list.
 - Anyone who has a feed link or a (not yet expired) stream link can use it. Links are not bound to an IP or device. This is inherent to URL-based players like DeoVR, which cannot send auth headers.
 - Feed keys and signatures are part of the URL and therefore appear in reverse proxy access logs.
 - Feed keys cannot be revoked per user. Changing the signing secret revokes all of them.
