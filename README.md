@@ -97,11 +97,11 @@ build.cmd         # Windows, uses a local .NET 10 SDK or Docker
 Output: `dist/DeoVR_1.0.0.0/Jellyfin.Plugin.DeoVR.dll`
 
 ## Releasing
+Publish a GitHub release (Releases → *Draft a new release*) with a new tag of the form `vX.Y.Z` on `main`, or:
 ```bash
-git tag v1.0.0
-git push origin v1.0.0
+gh release create v1.0.0 --target main --generate-notes
 ```
-GitHub Actions builds the plugin, attaches `deovr_<version>.zip` (plus a `.sha256` file) to the release and updates `manifest.json` on `main`. Only tags of the form `vX.Y.Z` on commits contained in `main` are released.
+GitHub Actions then builds the plugin, attaches `deovr_<version>.zip` (plus a `.sha256` file) to the release and updates `manifest.json` on `main`. Only tags of the form `vX.Y.Z` on commits contained in `main` are built.
 
 ## License
 GPL-3.0
