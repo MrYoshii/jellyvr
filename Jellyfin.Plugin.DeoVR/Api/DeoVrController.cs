@@ -22,6 +22,7 @@ using MediaBrowser.Model.Entities;
 using MediaBrowser.Model.Net;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.WebUtilities;
 using Microsoft.Extensions.Logging;
 
 namespace Jellyfin.Plugin.DeoVR.Api;
@@ -31,8 +32,11 @@ namespace Jellyfin.Plugin.DeoVR.Api;
 ///   GET|POST /deovr                 -> library (login via DeoVR POST login/password, or anonymous user)
 ///   GET|POST /deovr/f/{key}         -> library via personal feed key
 ///   GET|POST /deovr/v/{id}?u&amp;e&amp;s  -> single video JSON (signed)
-///   GET|HEAD /deovr/s/{id}?u&amp;e&amp;s  -> direct file stream with range support (signed)
+///   GET|HEAD /deovr/s/{id}/video.ext?u&amp;e&amp;s -> direct file stream with range support (signed)
+///   GET|POST /deovr/login           -> placeholder video shown while not logged in
+///   GET      /deovr/img/login.png   -> thumbnail of that placeholder
 ///   GET      /deovr/admin/links     -> feed links per user (admin only)
+///   GET      /deovr/admin/log       -> recent requests, for troubleshooting (admin only)
 /// </summary>
 [ApiController]
 [Route("deovr")]
@@ -47,6 +51,9 @@ public class DeoVrController : ControllerBase
     private readonly INetworkManager _networkManager;
     private readonly ILogger<DeoVrController> _logger;
 
+    /// <summary>What kind of credentials the current request carried (for the request log; never the values).</summary>
+    private string _credentials = "none";
+
     public DeoVrController(ILibraryManager libraryManager, IUserManager userManager, INetworkManager networkManager, ILogger<DeoVrController> logger)
     {
         _networkManager = networkManager;
@@ -59,11 +66,15 @@ public class DeoVrController : ControllerBase
 
     // ------------------------------------------------------------------ library
 
-    /// <summary>DeoVR probes the site with HEAD before requesting the library.</summary>
+    /// <summary>Answers HEAD probes of the library addresses.</summary>
     [AllowAnonymous]
     [HttpHead]
     [HttpHead("f/{key}")]
-    public IActionResult Probe() => Json(UnauthorizedFeed("0"));
+    public IActionResult Probe()
+    {
+        Trace("probe", "ok");
+        return Json(PlaceholderFeed("0"));
+    }
 
     [AllowAnonymous]
     [HttpGet]
@@ -73,10 +84,13 @@ public class DeoVrController : ControllerBase
         var (userId, state) = await AuthenticateFromRequest().ConfigureAwait(false);
         if (userId is null)
         {
-            return Json(UnauthorizedFeed(state));
+            Trace("library", state == "-1" ? "login failed (placeholder sent)" : "login required (placeholder sent)");
+            return Json(PlaceholderFeed(state));
         }
 
-        return Json(BuildFeed(userId.Value));
+        var feed = BuildFeed(userId.Value);
+        Trace("library", Describe(feed));
+        return Json(feed);
     }
 
     [AllowAnonymous]
@@ -87,30 +101,93 @@ public class DeoVrController : ControllerBase
         var user = _userManager.GetUsers().FirstOrDefault(u => FixedEquals(FeedKey(u.Id), key));
         if (user is null)
         {
-            return Json(UnauthorizedFeed("-1"));
+            Trace("library by feed key", "unknown feed key (placeholder sent)");
+            return Json(PlaceholderFeed("-1", "Unknown feed link", "Unknown feed link - copy it again from the Jellyfin dashboard (Plugins > DeoVR)"));
         }
 
-        return Json(BuildFeed(user.Id));
+        var feed = BuildFeed(user.Id);
+        Trace("library by feed key", Describe(feed));
+        return Json(feed);
     }
 
     /// <summary>
-    /// Library answer for unauthenticated requests, in the shape DeoVR expects:
-    /// "0" = login required (DeoVR asks for login/password), "-1" = login failed.
+    /// Placeholder shown to DeoVR while not logged in. DeoVR only opens its video list when the
+    /// answer contains at least one video, so the placeholder is a single "login required" entry.
+    /// authorized: "0" = no login sent yet, "-1" = login failed.
     /// </summary>
-    private static DeoVrFeed UnauthorizedFeed(string state) => new()
+    private DeoVrFeed PlaceholderFeed(string state, string? tab = null, string? title = null)
     {
-        Authorized = state,
-        Scenes = new List<DeoVrScene>
+        var baseUrl = GetBaseUrl();
+        var failed = state == "-1";
+        return new DeoVrFeed
         {
-            new() { Name = state == "-1" ? "Login Failed" : "Login Required" }
-        }
+            Authorized = state,
+            Scenes = new List<DeoVrScene>
+            {
+                new()
+                {
+                    Name = tab ?? (failed ? "Login failed" : "Login required"),
+                    List = new List<DeoVrListEntry>
+                    {
+                        new()
+                        {
+                            Title = title ?? (failed
+                                ? "Login failed - check your Jellyfin user name and password"
+                                : "Login required - use LOGIN in DeoVR with your Jellyfin user name and password"),
+                            VideoLength = 0,
+                            ThumbnailUrl = baseUrl + "/deovr/img/login.png",
+                            VideoUrl = baseUrl + "/deovr/login"
+                        }
+                    }
+                }
+            }
+        };
+    }
+
+    /// <summary>Video answer for the placeholder entry and for requests without a valid login or link.</summary>
+    private DeoVrVideo PlaceholderVideo(string state, string title) => new()
+    {
+        Title = title,
+        Authorized = state,
+        FullAccess = false,
+        FullVideoReady = false,
+        ThumbnailUrl = GetBaseUrl() + "/deovr/img/login.png"
     };
+
+    [AllowAnonymous]
+    [HttpGet("login")]
+    [HttpPost("login")]
+    [HttpHead("login")]
+    public IActionResult GetLoginPlaceholder()
+    {
+        Trace("login placeholder", "ok");
+        return Json(PlaceholderVideo("0", "Login required - use LOGIN in DeoVR with your Jellyfin user name and password"));
+    }
+
+    [AllowAnonymous]
+    [HttpGet("img/login.png")]
+    [HttpHead("img/login.png")]
+    public IActionResult GetLoginImage()
+    {
+        var stream = typeof(Plugin).Assembly.GetManifestResourceStream("Jellyfin.Plugin.DeoVR.Resources.login.png");
+        if (stream is null)
+        {
+            return NotFound();
+        }
+
+        Response.Headers["Cache-Control"] = "public, max-age=86400";
+        return File(stream, "image/png");
+    }
+
+    private static string Describe(DeoVrFeed feed)
+        => $"feed sent: {feed.Scenes.Count} tabs, {feed.Scenes.Sum(x => x.List.Count)} videos, authorized {feed.Authorized}";
 
     // ------------------------------------------------------------------ single video
 
     [AllowAnonymous]
     [HttpGet("v/{itemId}")]
     [HttpPost("v/{itemId}")]
+    [HttpHead("v/{itemId}")]
     public async Task<IActionResult> GetVideo([FromRoute] Guid itemId, [FromQuery] Guid? u, [FromQuery] long? e, [FromQuery] string? s)
     {
         Guid? userId;
@@ -124,7 +201,8 @@ public class DeoVrController : ControllerBase
             (userId, state) = await AuthenticateFromRequest().ConfigureAwait(false);
             if (userId is null)
             {
-                return Json(UnauthorizedFeed(state));
+                Trace("video", "no valid link or login (placeholder sent)");
+                return Json(PlaceholderVideo(state, "Link expired or login required - reload the library"));
             }
         }
 
@@ -132,11 +210,13 @@ public class DeoVrController : ControllerBase
         var item = _libraryManager.GetItemById(itemId);
         if (user is null || !IsUserAllowed(user))
         {
+            Trace("video", "403 user not allowed");
             return StatusCode(403);
         }
 
         if (item is not Video video || !item.IsVisibleStandalone(user) || !IsPlayableFile(video))
         {
+            Trace("video", "404 item not found, not visible or file missing");
             return NotFound();
         }
 
@@ -163,13 +243,14 @@ public class DeoVrController : ControllerBase
                         new()
                         {
                             Resolution = videoStream?.Height ?? item.Height,
-                            Url = SignedUrl(baseUrl, "s", item.Id, userId.Value, StreamExpiry(item))
+                            Url = SignedUrl(baseUrl, "s", item.Id, userId.Value, StreamExpiry(item), "/video" + StreamExtension(video))
                         }
                     }
                 }
             }
         };
 
+        Trace("video", $"video sent: {screenType}/{stereoMode}, {result.Encodings[0].Name}, {result.Encodings[0].VideoSources[0].Resolution}p");
         return Json(result);
     }
 
@@ -178,26 +259,33 @@ public class DeoVrController : ControllerBase
     [AllowAnonymous]
     [HttpGet("s/{itemId}")]
     [HttpHead("s/{itemId}")]
-    public IActionResult Stream([FromRoute] Guid itemId, [FromQuery] Guid u, [FromQuery] long e, [FromQuery] string s)
+    [HttpGet("s/{itemId}/{fileName}")]
+    [HttpHead("s/{itemId}/{fileName}")]
+    public IActionResult Stream([FromRoute] Guid itemId, [FromQuery] Guid? u, [FromQuery] long? e, [FromQuery] string? s)
     {
-        if (!VerifyLink("s", itemId, u, e, s))
+        if (!u.HasValue || !e.HasValue || string.IsNullOrEmpty(s) || !VerifyLink("s", itemId, u.Value, e.Value, s))
         {
+            Trace("stream", "403 missing, wrong or expired signature");
             return StatusCode(403);
         }
 
-        var user = _userManager.GetUserById(u);
+        var user = _userManager.GetUserById(u.Value);
         var item = _libraryManager.GetItemById(itemId);
         if (user is null || !IsUserAllowed(user))
         {
+            Trace("stream", "403 user not allowed");
             return StatusCode(403);
         }
 
         if (item is not Video video || !item.IsVisibleStandalone(user) || !IsPlayableFile(video))
         {
+            Trace("stream", "404 item not found, not visible or file missing");
             return NotFound();
         }
 
-        return PhysicalFile(video.Path, MimeTypes.GetMimeType(video.Path) ?? "application/octet-stream", enableRangeProcessing: true);
+        var mime = MimeTypes.GetMimeType(video.Path) ?? "application/octet-stream";
+        Trace("stream", "file sent as " + mime);
+        return PhysicalFile(video.Path, mime, enableRangeProcessing: true);
     }
 
     // ------------------------------------------------------------------ admin
@@ -214,6 +302,22 @@ public class DeoVrController : ControllerBase
         return Json(links);
     }
 
+    [HttpGet("admin/log")]
+    [Authorize(Policy = Policies.RequiresElevation)]
+    public IActionResult GetRequestLog() => Json(RequestLog.Snapshot());
+
+    /// <summary>Anything else below /deovr: answer 404, but record it so unexpected requests are visible.</summary>
+    [AllowAnonymous]
+    [ApiExplorerSettings(IgnoreApi = true)]
+    [AcceptVerbs("GET", "POST", "HEAD", "PUT", "DELETE", "PATCH", "OPTIONS", Route = "{**rest}", Order = 1000)]
+    public IActionResult NotHandled()
+    {
+        var parts = (Request.Path.Value ?? string.Empty).Split('/', StringSplitOptions.RemoveEmptyEntries);
+        var first = parts.Length > 1 ? Clip(parts[1], 20) : string.Empty;
+        Trace("unknown: /" + first + (parts.Length > 2 ? "/..." : string.Empty), "404");
+        return NotFound();
+    }
+
     // ------------------------------------------------------------------ feed building
 
     private DeoVrFeed BuildFeed(Guid userId)
@@ -222,8 +326,10 @@ public class DeoVrController : ControllerBase
         var user = _userManager.GetUserById(userId);
         if (user is null || !IsUserAllowed(user))
         {
-            feed.Authorized = "-1";
-            return feed;
+            return PlaceholderFeed(
+                "-1",
+                "Access denied",
+                "Access denied - user is disabled, may not play media, is outside the access schedule or may not connect remotely");
         }
 
         var baseUrl = GetBaseUrl();
@@ -399,17 +505,48 @@ public class DeoVrController : ControllerBase
                 var form = await Request.ReadFormAsync().ConfigureAwait(false);
                 login = form["login"].FirstOrDefault();
                 password = form["password"].FirstOrDefault();
+                _credentials = string.IsNullOrEmpty(login) ? "form body without login" : "login sent (form)";
             }
-            else if (Request.ContentLength is > 0 && (Request.ContentType ?? string.Empty).Contains("json", StringComparison.OrdinalIgnoreCase))
+            else if (Request.ContentLength is > 0 and <= 8192)
             {
-                using var doc = await JsonDocument.ParseAsync(Request.Body).ConfigureAwait(false);
-                if (doc.RootElement.TryGetProperty("login", out var l)) login = l.GetString();
-                if (doc.RootElement.TryGetProperty("password", out var p)) password = p.GetString();
+                // Players do not always label the body; accept JSON or URL-encoded fields either way.
+                using var reader = new StreamReader(Request.Body, Encoding.UTF8);
+                var text = (await reader.ReadToEndAsync().ConfigureAwait(false)).Trim();
+                if (text.StartsWith('{'))
+                {
+                    using var doc = JsonDocument.Parse(text);
+                    if (doc.RootElement.TryGetProperty("login", out var l)) login = l.GetString();
+                    if (doc.RootElement.TryGetProperty("password", out var p)) password = p.GetString();
+                    _credentials = string.IsNullOrEmpty(login) ? "json body without login" : "login sent (json)";
+                }
+                else
+                {
+                    var fields = QueryHelpers.ParseQuery(text);
+                    if (fields.TryGetValue("login", out var fl)) login = fl.ToString();
+                    if (fields.TryGetValue("password", out var fp)) password = fp.ToString();
+                    _credentials = string.IsNullOrEmpty(login) ? "body without login" : "login sent (unlabelled body)";
+                }
+            }
+            else if (Request.ContentLength is > 8192)
+            {
+                _credentials = "body too large (ignored)";
             }
         }
         catch (Exception ex)
         {
+            _credentials = "unreadable body";
             _logger.LogDebug(ex, "DeoVR: could not parse request body");
+        }
+
+        // Only noted for troubleshooting; credentials in the URL or in other headers are never used.
+        if (Request.Query.ContainsKey("login"))
+        {
+            _credentials += ", login in query string (ignored)";
+        }
+
+        if (Request.Headers.ContainsKey("Authorization"))
+        {
+            _credentials += ", Authorization header (ignored)";
         }
 
         if (!string.IsNullOrEmpty(login))
@@ -487,10 +624,30 @@ public class DeoVrController : ControllerBase
             : ListExpiry();
     }
 
-    private static string SignedUrl(string baseUrl, string purpose, Guid itemId, Guid userId, long exp)
+    private static string SignedUrl(string baseUrl, string purpose, Guid itemId, Guid userId, long exp, string suffix = "")
     {
         var sig = LinkSig(purpose, itemId, userId, exp);
-        return $"{baseUrl}/deovr/{purpose}/{itemId:N}?u={userId:N}&e={exp}&s={sig}";
+        return $"{baseUrl}/deovr/{purpose}/{itemId:N}{suffix}?u={userId:N}&e={exp}&s={sig}";
+    }
+
+    /// <summary>File extension for the stream address, so players can tell the container from the URL.</summary>
+    private static string StreamExtension(Video video)
+    {
+        var ext = Path.GetExtension(video.Path ?? string.Empty).ToLowerInvariant();
+        if (ext.Length < 2 || ext.Length > 6)
+        {
+            return ".mp4";
+        }
+
+        for (var i = 1; i < ext.Length; i++)
+        {
+            if (!char.IsAsciiLetterOrDigit(ext[i]))
+            {
+                return ".mp4";
+            }
+        }
+
+        return ext;
     }
 
     // ------------------------------------------------------------------ helpers
@@ -528,8 +685,38 @@ public class DeoVrController : ControllerBase
             return Config.PublicBaseUrl.Trim().TrimEnd('/');
         }
 
-        return $"{Request.Scheme}://{Request.Host}{Request.PathBase}".TrimEnd('/');
+        // Behind a reverse proxy that is not listed under "Known proxies", Request.Scheme is "http"
+        // although the client used https. X-Forwarded-Proto only changes links in this same answer.
+        var scheme = Request.Scheme;
+        var forwarded = Request.Headers["X-Forwarded-Proto"].ToString().Split(',')[0].Trim().ToLowerInvariant();
+        if (forwarded is "https" or "http")
+        {
+            scheme = forwarded;
+        }
+
+        return $"{scheme}://{Request.Host}{Request.PathBase}".TrimEnd('/');
     }
+
+    /// <summary>Records the current request in the in-memory request log (no keys, signatures or passwords).</summary>
+    private void Trace(string route, string result)
+    {
+        var forwarded = Request.Headers["X-Forwarded-Proto"].ToString();
+        RequestLog.Add(new RequestLogEntry
+        {
+            Time = DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture) + " UTC",
+            Method = Request.Method,
+            Route = route,
+            Scheme = string.IsNullOrEmpty(forwarded) ? Request.Scheme : $"{Request.Scheme} (forwarded: {Clip(forwarded, 10)})",
+            Client = HttpContext.Connection.RemoteIpAddress?.ToString() ?? "?",
+            UserAgent = Clip(Request.Headers["User-Agent"].ToString(), 120),
+            ContentType = Clip(Request.ContentType ?? string.Empty, 60),
+            Credentials = _credentials,
+            Range = Clip(Request.Headers["Range"].ToString(), 40),
+            Result = result
+        });
+    }
+
+    private static string Clip(string value, int max) => value.Length > max ? value.Substring(0, max) : value;
 
     private static InternalItemsQuery VideoQuery(User user, int limit) => new(user)
     {

@@ -43,6 +43,13 @@
             <h3 style="margin-top:2em">Personal feed links</h3>
             <div class="fieldDescription">Open the link of a user in the DeoVR browser and bookmark it. Treat it like a password.</div>
             <div id="DeoVrLinks"></div>
+
+            <h3 style="margin-top:2em">Recent DeoVR requests</h3>
+            <div class="fieldDescription">The last 100 requests the plugin handled, newest first. Kept in memory only; feed keys, signatures and passwords are never recorded. If a request from your headset is missing here, it did not reach Jellyfin (check the reverse proxy, TLS and the address).</div>
+            <button is="emby-button" type="button" id="DeoVrLogRefresh" class="raised emby-button" style="margin-top:.5em">
+                <span>Refresh</span>
+            </button>
+            <div id="DeoVrLog" style="font-family:monospace;font-size:.85em;white-space:pre-wrap;word-break:break-word;margin-top:1em"></div>
         </div>
     </div>
 
@@ -68,6 +75,34 @@
                 });
             }
 
+            function renderLog(list) {
+                var box = page.querySelector('#DeoVrLog');
+                if (!list || !list.length) {
+                    box.textContent = 'No requests yet.';
+                    return;
+                }
+                box.textContent = list.map(function (x) {
+                    return [
+                        x.time,
+                        x.method,
+                        x.route,
+                        '-> ' + x.result,
+                        '| ' + x.scheme,
+                        '| from ' + x.client,
+                        '| credentials: ' + x.credentials,
+                        x.range ? '| range: ' + x.range : '',
+                        x.contentType ? '| body: ' + x.contentType : '',
+                        '| agent: ' + (x.userAgent || '(none)')
+                    ].filter(Boolean).join(' ');
+                }).join('\n');
+            }
+
+            function loadLog() {
+                ApiClient.getJSON(ApiClient.getUrl('deovr/admin/log')).then(renderLog);
+            }
+
+            page.querySelector('#DeoVrLogRefresh').addEventListener('click', loadLog);
+
             page.addEventListener('pageshow', function () {
                 Dashboard.showLoadingMsg();
                 ApiClient.getPluginConfiguration(pluginId).then(function (c) {
@@ -80,6 +115,7 @@
                     Dashboard.hideLoadingMsg();
                 });
                 ApiClient.getJSON(ApiClient.getUrl('deovr/admin/links')).then(renderLinks);
+                loadLog();
             });
 
             page.querySelector('#DeoVrConfigForm').addEventListener('submit', function (e) {

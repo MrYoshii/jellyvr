@@ -20,6 +20,8 @@
   <ItemGroup>
     <None Remove="Configuration\configPage.html" />
     <EmbeddedResource Include="Configuration\configPage.html" />
+    <None Remove="Resources\login.png" />
+    <EmbeddedResource Include="Resources\login.png" LogicalName="Jellyfin.Plugin.DeoVR.Resources.login.png" />
   </ItemGroup>
 
 </Project>

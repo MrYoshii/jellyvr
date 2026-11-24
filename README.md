@@ -36,17 +36,28 @@ Restart Jellyfin afterwards.
 
 ## Setup
 1. Dashboard → Plugins → DeoVR.
-2. Set **Public base URL** to the address DeoVR uses to reach your server (e.g. `https://jellyfin.example.com`). Strongly recommended behind a reverse proxy.
-3. Copy the **feed link** of a user and open it in the DeoVR browser. Bookmark it there.
-
-DeoVR needs a valid HTTPS certificate for remote servers.
+2. Set **Public base URL** to the address DeoVR uses to reach your server (e.g. `https://jellyfin.example.com`). Recommended behind a reverse proxy.
+3. In DeoVR's browser, open your server address (e.g. `https://jellyfin.example.com`). DeoVR asks the server for `/deovr` by itself.
+   - Not logged in, you see one **Login required** entry. Use DeoVR's login with your Jellyfin user name and password.
+   - Or open the personal **feed link** from the plugin page instead; it needs no login.
 
 ## Access methods
 | Method | URL | Notes |
 |---|---|---|
-| Feed link (recommended) | `/deovr/f/<key>` | Per-user key, shown on the plugin page (admins only). |
-| Login | `/deovr` | DeoVR sends `login` / `password`; checked against Jellyfin users. |
-| Anonymous | `/deovr` | Optional fallback user configured on the plugin page. Trusted networks only. |
+| Login | server address, or `/deovr` | DeoVR sends `login` / `password` by POST; checked against Jellyfin users. |
+| Feed link | `/deovr/f/<key>` | Per-user key, shown on the plugin page (admins only). No login needed. |
+| Anonymous | server address, or `/deovr` | Optional fallback user configured on the plugin page. Trusted networks only. |
+
+## Troubleshooting
+The plugin page lists the **recent DeoVR requests** (last 100, in memory, without keys or passwords). Start there:
+
+- **Nothing from the headset shows up.** The request never reached Jellyfin.
+  - DeoVR's own HTTP client has been reported to fail against servers that only offer TLS 1.3; allow TLS 1.2 on the reverse proxy.
+  - Use a certificate the headset trusts (self-signed certificates do not work on standalone headsets).
+  - Check reverse-proxy rules that block unusual or missing user agents.
+- **DeoVR opens the normal Jellyfin web page ("legacy website").** DeoVR got no usable video list from `/deovr`. Check the request log for what it asked and what the plugin answered.
+- **No thumbnails.** DeoVR only shows thumbnails served over HTTPS.
+- **Links start with `http://` behind an HTTPS proxy.** Set the public base URL, or let the proxy send `X-Forwarded-Proto`.
 
 ## 3D / VR detection
 Priority, first match wins:
@@ -69,7 +80,8 @@ MVC 3D (Blu-ray frame packing) is not supported by DeoVR and plays as 2D.
 - File paths come from the Jellyfin database only, never from the request.
 - Building a feed does bounded work: sorting and the item limit are applied in the library query, and no per-file disk access happens until a video is played.
 - The signing secret is always at least 32 characters; a missing or shorter value is replaced by a random one.
-- `/deovr/admin/links` requires an administrator.
+- `/deovr/admin/links` and `/deovr/admin/log` require an administrator.
+- The request log is kept in memory only (last 100 requests) and never records feed keys, signatures or passwords.
 - Logins go through Jellyfin's own `AuthenticateUser`.
 
 Known limitations:
@@ -78,7 +90,7 @@ Known limitations:
 - Feed keys cannot be revoked per user. Changing the signing secret revokes all of them.
 - The plugin has no own rate limiting. Limit `/deovr` at your reverse proxy if exposed to the internet.
 - The remote-access check needs the real client IP. Behind a reverse proxy, add it under Dashboard → Networking → Known proxies.
-- Without a public base URL, links are built from the request's `Host` header.
+- Without a public base URL, links are built from the request's `Host` header and `X-Forwarded-Proto`.
 
 ## Endpoints
 | Route | Purpose |
@@ -86,8 +98,10 @@ Known limitations:
 | `GET/POST /deovr` | Library (login / anonymous) |
 | `GET/POST /deovr/f/{key}` | Library via feed key |
 | `GET/POST /deovr/v/{id}?u&e&s` | Single video JSON (signed, expires) |
-| `GET/HEAD /deovr/s/{id}?u&e&s` | File stream with range support (signed, expires) |
+| `GET/HEAD /deovr/s/{id}/video.<ext>?u&e&s` | File stream with range support (signed, expires) |
+| `GET/POST /deovr/login`, `GET /deovr/img/login.png` | "Login required" placeholder entry and its thumbnail |
 | `GET /deovr/admin/links` | Feed links of all users (admin only) |
+| `GET /deovr/admin/log` | Recent requests for troubleshooting (admin only) |
 
 ## Building
 ```bash

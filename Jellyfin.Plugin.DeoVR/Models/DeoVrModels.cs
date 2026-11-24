@@ -62,6 +62,15 @@ public sealed class DeoVrVideo
 
     [JsonPropertyName("thumbnailUrl")]
     public string ThumbnailUrl { get; set; } = string.Empty;
+
+    [JsonPropertyName("authorized")]
+    public string Authorized { get; set; } = "1";
+
+    [JsonPropertyName("fullAccess")]
+    public bool FullAccess { get; set; } = true;
+
+    [JsonPropertyName("fullVideoReady")]
+    public bool FullVideoReady { get; set; } = true;
 }
 
 public sealed class DeoVrEncoding
