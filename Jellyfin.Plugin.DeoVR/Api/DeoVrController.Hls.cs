@@ -63,57 +63,7 @@ public partial class DeoVrController
         _ => !OriginalIsSafe(video)
     };
 
-    /// <summary>
-    /// Half side-by-side / half top-bottom 3D: each eye is squeezed to half width / height.
-    /// DeoVR does not stretch it back, so the picture looks narrow.
-    /// </summary>
-    private static bool IsHalf3D(Video video, string stereoMode)
-    {
-        if (stereoMode == "off")
-        {
-            return false;
-        }
-
-        // Manual override per item: Jellyfin tags "deovr-half" / "deovr-full".
-        foreach (var tag in video.Tags ?? Array.Empty<string>())
-        {
-            switch (tag.Trim().ToLowerInvariant())
-            {
-                case "deovr-half": return true;
-                case "deovr-full": return false;
-            }
-        }
-
-        if (video.Video3DFormat is Video3DFormat.HalfSideBySide or Video3DFormat.HalfTopAndBottom)
-        {
-            return true;
-        }
-
-        var name = System.IO.Path.GetFileNameWithoutExtension(video.Path ?? string.Empty).ToLowerInvariant();
-        if (Regex.IsMatch(name, @"(^|[^a-z])(fsbs|ftab|fou|full[-_ ]?sbs|full[-_ ]?(tab|ou))([^a-z]|$)"))
-        {
-            return false;
-        }
-
-        if (Regex.IsMatch(name, @"(^|[^a-z])(hsbs|htab|hou|half[-_ ]?sbs|half[-_ ]?(tab|ou))([^a-z]|$)"))
-        {
-            return true;
-        }
-
-        // Plain "SBS"/"TB" without half/full: decide by frame size. A full-size side-by-side movie is
-        // at least ~3840 wide (two full pictures); 1920x1080 or 1920x804 SBS means half width per eye.
-        var vs = video.GetMediaStreams().FirstOrDefault(x => x.Type == MediaStreamType.Video);
-        var w = vs?.Width ?? video.Width;
-        var h = vs?.Height ?? video.Height;
-        if (w <= 0 || h <= 0)
-        {
-            return false;
-        }
-
-        return stereoMode == "tb" ? h <= 1440 : w <= 2560;
-    }
-
-    /// <summary>Signed HLS address. "h" = normal, "x" = half 3D expanded to full size.</summary>
+    /// <summary>Signed HLS address.</summary>
     private static string HlsUrl(string baseUrl, Guid itemId, Guid userId, long exp, string kind = "h")
     {
         var sig = LinkSig(kind, itemId, userId, exp);
@@ -131,18 +81,6 @@ public partial class DeoVrController
         [FromRoute] string path,
         CancellationToken cancellationToken)
         => ProxyHls("h", itemId, u, e, sig, path, cancellationToken);
-
-    [AllowAnonymous]
-    [HttpGet("x/{itemId}/{u}/{e}/{sig}/{**path}")]
-    [HttpHead("x/{itemId}/{u}/{e}/{sig}/{**path}")]
-    public Task<IActionResult> HlsExpanded3D(
-        [FromRoute] Guid itemId,
-        [FromRoute] Guid u,
-        [FromRoute] long e,
-        [FromRoute] string sig,
-        [FromRoute] string path,
-        CancellationToken cancellationToken)
-        => ProxyHls("x", itemId, u, e, sig, path, cancellationToken);
 
     private async Task<IActionResult> ProxyHls(string kind, Guid itemId, Guid u, long e, string sig, string path, CancellationToken cancellationToken)
     {
@@ -194,24 +132,6 @@ public partial class DeoVrController
             query["EnableAdaptiveBitrateStreaming"] = "false";
             query["BreakOnNonKeyFrames"] = "false";
 
-            if (kind == "x")
-            {
-                // Scale the squeezed half-3D picture back to full size (e.g. 1920x1080 HSBS -> 3840x1080).
-                var vs = video.GetMediaStreams().FirstOrDefault(x => x.Type == MediaStreamType.Video);
-                var w = vs?.Width ?? 1920;
-                var h = vs?.Height ?? 1080;
-                var topBottom = video.Video3DFormat == Video3DFormat.HalfTopAndBottom
-                    || DetectProjection(video).StereoMode == "tb";
-                var (tw, th) = topBottom ? (w, h * 2) : (w * 2, h);
-                query["VideoCodec"] = "h264,hevc";
-                query["EnableAutoStreamCopy"] = "false";
-                query["AllowVideoStreamCopy"] = "false";
-                query["Width"] = tw.ToString(System.Globalization.CultureInfo.InvariantCulture);
-                query["Height"] = th.ToString(System.Globalization.CultureInfo.InvariantCulture);
-                query["MaxWidth"] = query["Width"];
-                query["MaxHeight"] = query["Height"];
-                query["VideoBitRate"] = "25000000";
-            }
         }
         else
         {

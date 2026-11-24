@@ -255,19 +255,6 @@ public partial class DeoVrController : ControllerBase
         var expiry = StreamExpiry(item);
         var (streamBase, viaLan) = StreamBaseUrl();
         baseUrl = streamBase;
-        if (Config.ExpandHalf3D && IsHalf3D(video, stereoMode))
-        {
-            // Full-size picture per eye (made by Jellyfin's transcoder), always with AAC audio.
-            result.Encodings.Add(new DeoVrEncoding
-            {
-                Name = "Jellyfin (full-size 3D)",
-                VideoSources = new List<DeoVrVideoSource>
-                {
-                    new() { Resolution = height, Url = HlsUrl(baseUrl, item.Id, userId.Value, expiry, "x") }
-                }
-            });
-        }
-
         if (OfferHls(video))
         {
             result.Encodings.Add(new DeoVrEncoding

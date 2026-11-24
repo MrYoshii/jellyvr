@@ -31,9 +31,6 @@ public class PluginConfiguration : BasePluginConfiguration
     /// <summary>Show TV shows as one tab per library with all episodes (series / season / episode order). Off by default.</summary>
     public bool ShowTvShows { get; set; }
 
-    /// <summary>Offer half side-by-side / top-bottom 3D scaled to full size (needs video transcoding).</summary>
-    public bool ExpandHalf3D { get; set; } = true;
-
     /// <summary>Address of this server inside the LAN, e.g. http://192.168.1.10:8096 (empty = off).</summary>
     public string LanBaseUrl { get; set; } = string.Empty;
 
