@@ -12,7 +12,7 @@ Watch your Jellyfin library in [DeoVR](https://deovr.com): regular movies on a 2
 
 - Requires Jellyfin **12.4** or newer (.NET 10).
 - The original file is streamed with HTTP range support. When DeoVR cannot play it (MKV, or audio such as EAC3, DTS, TrueHD), an extra stream with AAC stereo audio is offered via Jellyfin's own transcoder (HLS, video copied when possible). Setting: *Audio conversion* (Auto / Always / Never).
-- TV shows: one tab per series, episodes in season and episode order.
+- TV shows: one tab per library, sorted by series, season and episode.
 
 ## Installation
 

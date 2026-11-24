@@ -369,8 +369,8 @@ public partial class DeoVrController : ControllerBase
             List<Video> videos;
             try
             {
-                // Episodes: one tab per series, in series / season / episode order.
-                var epQuery = VideoQuery(user, Math.Min(max * 20, 20000));
+                // Episodes in series / season / episode order.
+                var epQuery = VideoQuery(user, max);
                 epQuery.IncludeItemTypes = new[] { BaseItemKind.Episode };
                 epQuery.OrderBy = new[]
                 {
@@ -400,13 +400,13 @@ public partial class DeoVrController : ControllerBase
                 }
             }
 
-            foreach (var series in episodes.OfType<Episode>().GroupBy(ep => ep.SeriesId))
+            if (episodes.Count > 0)
             {
-                var list = series.ToList();
+                // One tab per library, sorted by series, season and episode (one tab per series gets unusable).
                 feed.Scenes.Add(new DeoVrScene
                 {
-                    Name = list[0].SeriesName ?? view.Name,
-                    List = list.Take(max).Select(ep => ToListEntry(baseUrl, ep, userId, inSeriesTab: true)).ToList()
+                    Name = view.Name,
+                    List = episodes.Select(ep => ToListEntry(baseUrl, ep, userId)).ToList()
                 });
             }
 
@@ -414,7 +414,7 @@ public partial class DeoVrController : ControllerBase
             {
                 feed.Scenes.Add(new DeoVrScene
                 {
-                    Name = view.Name,
+                    Name = episodes.Count > 0 ? view.Name + " – Videos" : view.Name,
                     List = videos.Select(v => ToListEntry(baseUrl, v, userId)).ToList()
                 });
             }
