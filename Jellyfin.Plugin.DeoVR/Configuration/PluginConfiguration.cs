@@ -28,6 +28,18 @@ public class PluginConfiguration : BasePluginConfiguration
     /// <summary>Local Jellyfin address the plugin uses for transcoding (empty = http://127.0.0.1:&lt;port&gt;).</summary>
     public string InternalJellyfinUrl { get; set; } = string.Empty;
 
+    /// <summary>"Folders": one tile per series, opening it shows its seasons. "List": all episodes in one list.</summary>
+    public string SeriesView { get; set; } = "Folders";
+
+    /// <summary>Address of this server inside the LAN, e.g. http://192.168.1.10:8096 (empty = off).</summary>
+    public string LanBaseUrl { get; set; } = string.Empty;
+
+    /// <summary>"Auto": LAN address for clients in the local network; "Always"; "Off".</summary>
+    public string LanMode { get; set; } = "Auto";
+
+    /// <summary>Extra client addresses or networks (CIDR) treated as local, e.g. your home's public IP.</summary>
+    public string LanExtraNetworks { get; set; } = string.Empty;
+
     /// <summary>HMAC secret for links. Changing it invalidates all feed links.</summary>
     public string SigningSecret { get; set; } = string.Empty;
 }

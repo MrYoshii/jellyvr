@@ -38,6 +38,30 @@
                     <input is="emby-input" type="text" id="InternalJellyfinUrl" label="Internal Jellyfin address (optional)" />
                     <div class="fieldDescription">Address the plugin uses to reach this Jellyfin server for audio conversion. Leave empty for http://127.0.0.1 and the configured HTTP port.</div>
                 </div>
+                <div class="selectContainer">
+                    <label class="selectLabel" for="SeriesView">TV shows</label>
+                    <select is="emby-select" id="SeriesView" class="emby-select-withcolor emby-select">
+                        <option value="Folders">Folders - one tile per series, then one tab per season</option>
+                        <option value="List">List - all episodes in one list</option>
+                    </select>
+                </div>
+                <h3>Streaming over LAN</h3>
+                <div class="inputContainer">
+                    <input is="emby-input" type="text" id="LanBaseUrl" label="LAN address (optional)" />
+                    <div class="fieldDescription">e.g. http://192.168.1.10:8096. Video streams for players in your network then go directly to this address instead of through the internet / reverse proxy. Library and thumbnails keep using the public address.</div>
+                </div>
+                <div class="selectContainer">
+                    <label class="selectLabel" for="LanMode">Use LAN address</label>
+                    <select is="emby-select" id="LanMode" class="emby-select-withcolor emby-select">
+                        <option value="Auto">Auto - for players in the local network</option>
+                        <option value="Always">Always</option>
+                        <option value="Off">Off</option>
+                    </select>
+                </div>
+                <div class="inputContainer">
+                    <input is="emby-input" type="text" id="LanExtraNetworks" label="Also treat as local (optional)" />
+                    <div class="fieldDescription">Comma-separated IPs or networks (CIDR). Needed when your player reaches Jellyfin through the internet, e.g. your home's public IP. The request log below shows which address Jellyfin sees.</div>
+                </div>
                 <div class="checkboxContainer">
                     <label>
                         <input is="emby-checkbox" type="checkbox" id="Show3DScene" />
@@ -124,6 +148,10 @@
                     page.querySelector('#LinkLifetimeHours').value = c.LinkLifetimeHours;
                     page.querySelector('#MaxItemsPerLibrary').value = c.MaxItemsPerLibrary;
                     page.querySelector('#Show3DScene').checked = !!c.Show3DScene;
+                    page.querySelector('#SeriesView').value = c.SeriesView || 'Folders';
+                    page.querySelector('#LanBaseUrl').value = c.LanBaseUrl || '';
+                    page.querySelector('#LanMode').value = c.LanMode || 'Auto';
+                    page.querySelector('#LanExtraNetworks').value = c.LanExtraNetworks || '';
                     page.querySelector('#AudioTranscoding').value = c.AudioTranscoding || 'Auto';
                     page.querySelector('#InternalJellyfinUrl').value = c.InternalJellyfinUrl || '';
                     page.querySelector('#SigningSecret').value = c.SigningSecret || '';
@@ -142,6 +170,10 @@
                     c.LinkLifetimeHours = parseInt(page.querySelector('#LinkLifetimeHours').value, 10) || 24;
                     c.MaxItemsPerLibrary = parseInt(page.querySelector('#MaxItemsPerLibrary').value, 10) || 1000;
                     c.Show3DScene = page.querySelector('#Show3DScene').checked;
+                    c.SeriesView = page.querySelector('#SeriesView').value;
+                    c.LanBaseUrl = page.querySelector('#LanBaseUrl').value.trim();
+                    c.LanMode = page.querySelector('#LanMode').value;
+                    c.LanExtraNetworks = page.querySelector('#LanExtraNetworks').value.trim();
                     c.AudioTranscoding = page.querySelector('#AudioTranscoding').value;
                     c.InternalJellyfinUrl = page.querySelector('#InternalJellyfinUrl').value.trim();
                     c.SigningSecret = page.querySelector('#SigningSecret').value.trim() || c.SigningSecret;

@@ -253,6 +253,8 @@ public partial class DeoVrController : ControllerBase
 
         var height = videoStream?.Height ?? item.Height;
         var expiry = StreamExpiry(item);
+        var (streamBase, viaLan) = StreamBaseUrl();
+        baseUrl = streamBase;
         if (OfferHls(video))
         {
             result.Encodings.Add(new DeoVrEncoding
@@ -274,8 +276,78 @@ public partial class DeoVrController : ControllerBase
             }
         });
 
-        Trace("video", $"video sent: {screenType}/{stereoMode}, {result.Encodings[0].Name}, {result.Encodings[0].VideoSources[0].Resolution}p");
+        Trace("video", $"video sent: {screenType}/{stereoMode}, {result.Encodings[0].Name}, {result.Encodings[0].VideoSources[0].Resolution}p, streams via {(viaLan ? "LAN address" : "public address")}");
         return Json(result);
+    }
+
+    // ------------------------------------------------------------------ series folder
+
+    /// <summary>Opened from a series tile: one tab per season, episodes in order.</summary>
+    [AllowAnonymous]
+    [HttpGet("g/{seriesId}")]
+    [HttpPost("g/{seriesId}")]
+    [HttpHead("g/{seriesId}")]
+    public IActionResult GetSeries([FromRoute] Guid seriesId, [FromQuery] Guid? u, [FromQuery] long? e, [FromQuery] string? s)
+    {
+        if (!u.HasValue || !e.HasValue || string.IsNullOrEmpty(s) || !VerifyLink("g", seriesId, u.Value, e.Value, s))
+        {
+            Trace("series", "link expired or invalid (placeholder sent)");
+            return Json(PlaceholderFeed("-1", "Link expired", "Link expired - reload the library"));
+        }
+
+        var user = _userManager.GetUserById(u.Value);
+        if (user is null || !IsUserAllowed(user))
+        {
+            Trace("series", "user not allowed (placeholder sent)");
+            return Json(PlaceholderFeed("-1", "Access denied", "Access denied"));
+        }
+
+        var series = _libraryManager.GetItemById(seriesId);
+        if (series is not Series || !series.IsVisibleStandalone(user))
+        {
+            Trace("series", "404 series not found or not visible");
+            return NotFound();
+        }
+
+        var query = VideoQuery(user, 5000);
+        query.AncestorIds = new[] { seriesId };
+        query.IncludeItemTypes = new[] { BaseItemKind.Episode };
+        query.OrderBy = new[]
+        {
+            (ItemSortBy.ParentIndexNumber, SortOrder.Ascending),
+            (ItemSortBy.IndexNumber, SortOrder.Ascending)
+        };
+        var episodes = _libraryManager.GetItemList(query).OfType<Episode>().Where(IsListable).ToList();
+
+        var baseUrl = GetBaseUrl();
+        var feed = new DeoVrFeed();
+        foreach (var season in episodes.GroupBy(ep => ep.ParentIndexNumber ?? -1))
+        {
+            var first = season.First();
+            var name = !string.IsNullOrWhiteSpace(first.SeasonName)
+                ? first.SeasonName
+                : season.Key switch { 0 => "Specials", -1 => series.Name, _ => $"Season {season.Key}" };
+            feed.Scenes.Add(new DeoVrScene
+            {
+                Name = name,
+                List = season.Select(ep => new DeoVrListEntry
+                {
+                    Title = $"E{ep.IndexNumber?.ToString("00", CultureInfo.InvariantCulture) ?? "??"} – {ep.Name}",
+                    VideoLength = RuntimeSeconds(ep),
+                    ThumbnailUrl = ThumbUrl(baseUrl, ep),
+                    VideoUrl = SignedUrl(baseUrl, "v", ep.Id, u.Value, ListExpiry())
+                }).ToList()
+            });
+        }
+
+        if (feed.Scenes.Count == 0)
+        {
+            Trace("series", "no playable episodes (placeholder sent)");
+            return Json(PlaceholderFeed("1", series.Name, "No playable episodes"));
+        }
+
+        Trace("series", Describe(feed));
+        return Json(feed);
     }
 
     // ------------------------------------------------------------------ stream
@@ -365,11 +437,24 @@ public partial class DeoVrController : ControllerBase
         // and no per-file filesystem access is done while building the feed.
         foreach (var view in _libraryManager.GetUserRootFolder().GetChildren(user, true).OfType<Folder>())
         {
-            List<Video> episodes;
+            List<Video> episodes = new();
+            List<BaseItem> seriesList = new();
             List<Video> videos;
             try
             {
-                // Episodes in series / season / episode order.
+                if (Config.SeriesView != "List")
+                {
+                    // One tile per series; opening it lists the seasons (see GetSeries).
+                    seriesList = view.GetItemList(new InternalItemsQuery(user)
+                    {
+                        Recursive = true,
+                        IncludeItemTypes = new[] { BaseItemKind.Series },
+                        OrderBy = new[] { (ItemSortBy.SortName, SortOrder.Ascending) },
+                        Limit = max
+                    }).ToList();
+                }
+
+                // Episodes in series / season / episode order (flat list mode).
                 var epQuery = VideoQuery(user, max);
                 epQuery.IncludeItemTypes = new[] { BaseItemKind.Episode };
                 epQuery.OrderBy = new[]
@@ -378,7 +463,10 @@ public partial class DeoVrController : ControllerBase
                     (ItemSortBy.ParentIndexNumber, SortOrder.Ascending),
                     (ItemSortBy.IndexNumber, SortOrder.Ascending)
                 };
-                episodes = view.GetItemList(epQuery).OfType<Video>().Where(IsListable).ToList();
+                if (seriesList.Count == 0)
+                {
+                    episodes = view.GetItemList(epQuery).OfType<Video>().Where(IsListable).ToList();
+                }
 
                 // Everything else (movies, videos): one tab per library, newest first.
                 var query = VideoQuery(user, max);
@@ -400,6 +488,21 @@ public partial class DeoVrController : ControllerBase
                 }
             }
 
+            if (seriesList.Count > 0)
+            {
+                feed.Scenes.Add(new DeoVrScene
+                {
+                    Name = view.Name,
+                    List = seriesList.Select(x => new DeoVrListEntry
+                    {
+                        Title = x.ProductionYear.HasValue ? $"{x.Name} ({x.ProductionYear})" : x.Name,
+                        VideoLength = 0,
+                        ThumbnailUrl = ThumbUrl(baseUrl, x),
+                        VideoUrl = SignedUrl(baseUrl, "g", x.Id, userId, ListExpiry())
+                    }).ToList()
+                });
+            }
+
             if (episodes.Count > 0)
             {
                 // One tab per library, sorted by series, season and episode (one tab per series gets unusable).
@@ -414,7 +517,7 @@ public partial class DeoVrController : ControllerBase
             {
                 feed.Scenes.Add(new DeoVrScene
                 {
-                    Name = episodes.Count > 0 ? view.Name + " – Videos" : view.Name,
+                    Name = episodes.Count > 0 || seriesList.Count > 0 ? view.Name + " – Videos" : view.Name,
                     List = videos.Select(v => ToListEntry(baseUrl, v, userId)).ToList()
                 });
             }
@@ -722,6 +825,62 @@ public partial class DeoVrController : ControllerBase
 
         var ip = HttpContext.Connection.RemoteIpAddress;
         return ip is not null && _networkManager.IsInLocalNetwork(ip);
+    }
+
+    /// <summary>
+    /// Address for the video streams: the LAN address for clients in the local network
+    /// (or always, depending on the setting), otherwise the normal base URL.
+    /// </summary>
+    private (string Url, bool ViaLan) StreamBaseUrl()
+    {
+        var lan = (Config.LanBaseUrl ?? string.Empty).Trim().TrimEnd('/');
+        if (lan.Length == 0 || Config.LanMode == "Off")
+        {
+            return (GetBaseUrl(), false);
+        }
+
+        if (Config.LanMode == "Always" || IsLanClient())
+        {
+            return (lan, true);
+        }
+
+        return (GetBaseUrl(), false);
+    }
+
+    private bool IsLanClient()
+    {
+        var ip = HttpContext.Connection.RemoteIpAddress;
+        if (ip is null)
+        {
+            return false;
+        }
+
+        if (ip.IsIPv4MappedToIPv6)
+        {
+            ip = ip.MapToIPv4();
+        }
+
+        if (_networkManager.IsInLocalNetwork(ip))
+        {
+            return true;
+        }
+
+        foreach (var entry in (Config.LanExtraNetworks ?? string.Empty).Split(new[] { ',', ';', ' ', '\n', '\r', '\t' }, StringSplitOptions.RemoveEmptyEntries))
+        {
+            if (entry.Contains('/', StringComparison.Ordinal))
+            {
+                if (System.Net.IPNetwork.TryParse(entry, out var net) && net.Contains(ip))
+                {
+                    return true;
+                }
+            }
+            else if (System.Net.IPAddress.TryParse(entry, out var single) && single.Equals(ip))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private string GetBaseUrl()
