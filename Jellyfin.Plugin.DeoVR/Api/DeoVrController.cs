@@ -554,7 +554,7 @@ public partial class DeoVrController : ControllerBase
             if (Request.HasFormContentType)
             {
                 var form = await Request.ReadFormAsync().ConfigureAwait(false);
-                login = form["login"].FirstOrDefault();
+                login = form["login"].FirstOrDefault() ?? form["username"].FirstOrDefault();
                 password = form["password"].FirstOrDefault();
                 _credentials = string.IsNullOrEmpty(login) ? "form body without login" : "login sent (form)";
             }
@@ -567,6 +567,7 @@ public partial class DeoVrController : ControllerBase
                 {
                     using var doc = JsonDocument.Parse(text);
                     if (doc.RootElement.TryGetProperty("login", out var l)) login = l.GetString();
+                    else if (doc.RootElement.TryGetProperty("username", out var un)) login = un.GetString(); // HereSphere
                     if (doc.RootElement.TryGetProperty("password", out var p)) password = p.GetString();
                     _credentials = string.IsNullOrEmpty(login) ? "json body without login" : "login sent (json)";
                 }
