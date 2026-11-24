@@ -28,8 +28,11 @@ public class PluginConfiguration : BasePluginConfiguration
     /// <summary>Local Jellyfin address the plugin uses for transcoding (empty = http://127.0.0.1:&lt;port&gt;).</summary>
     public string InternalJellyfinUrl { get; set; } = string.Empty;
 
-    /// <summary>"Folders": one tile per series, opening it shows its seasons. "List": all episodes in one list.</summary>
-    public string SeriesView { get; set; } = "Folders";
+    /// <summary>"List": all episodes in one tab, sorted by series/season/episode. "Off": no TV shows.</summary>
+    public string SeriesView { get; set; } = "List";
+
+    /// <summary>Offer half side-by-side / top-bottom 3D scaled to full size (needs video transcoding).</summary>
+    public bool ExpandHalf3D { get; set; } = true;
 
     /// <summary>Address of this server inside the LAN, e.g. http://192.168.1.10:8096 (empty = off).</summary>
     public string LanBaseUrl { get; set; } = string.Empty;

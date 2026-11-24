@@ -12,7 +12,8 @@ Watch your Jellyfin library in [DeoVR](https://deovr.com): regular movies on a 2
 
 - Requires Jellyfin **12.4** or newer (.NET 10).
 - The original file is streamed with HTTP range support. When DeoVR cannot play it (MKV, or audio such as EAC3, DTS, TrueHD), an extra stream with AAC stereo audio is offered via Jellyfin's own transcoder (HLS, video copied when possible). Setting: *Audio conversion* (Auto / Always / Never).
-- TV shows: one tile per series; opening it shows one tab per season (setting *TV shows*: Folders / List).
+- TV shows: one tab per library, sorted by series, season and episode (setting *TV shows*: List / Off). DeoVR has no folders, so nested series/season views are not possible.
+- Half side-by-side / top-bottom 3D (HSBS, HTAB): an extra stream scaled to full size per eye, so faces are not squeezed (uses Jellyfin video transcoding; can be turned off).
 - Streaming over LAN: optional LAN address for video streams of players in your network, so they do not go through the internet / reverse proxy.
 
 ## Installation
@@ -101,8 +102,8 @@ Known limitations:
 | `GET/POST /deovr/f/{key}` | Library via feed key |
 | `GET/POST /deovr/v/{id}?u&e&s` | Single video JSON (signed, expires) |
 | `GET/HEAD /deovr/s/{id}/video.<ext>?u&e&s` | File stream with range support (signed, expires) |
-| `GET/POST /deovr/g/{seriesId}?u&e&s` | Seasons and episodes of a series (signed, expires) |
 | `GET/HEAD /deovr/h/{id}/{u}/{e}/{s}/master.m3u8` | HLS stream with AAC audio via Jellyfin (signed, expires) |
+| `GET/HEAD /deovr/x/{id}/{u}/{e}/{s}/master.m3u8` | Half 3D scaled to full size via Jellyfin (signed, expires) |
 | `GET/POST /deovr/login`, `GET /deovr/img/login.png` | "Login required" placeholder entry and its thumbnail |
 | `GET /deovr/admin/links` | Feed links of all users (admin only) |
 | `GET /deovr/admin/log` | Recent requests for troubleshooting (admin only) |

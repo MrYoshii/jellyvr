@@ -41,9 +41,15 @@
                 <div class="selectContainer">
                     <label class="selectLabel" for="SeriesView">TV shows</label>
                     <select is="emby-select" id="SeriesView" class="emby-select-withcolor emby-select">
-                        <option value="Folders">Folders - one tile per series, then one tab per season</option>
-                        <option value="List">List - all episodes in one list</option>
+                        <option value="List">One tab, sorted by series, season and episode</option>
+                        <option value="Off">Off - do not show TV shows</option>
                     </select>
+                </div>
+                <div class="checkboxContainer">
+                    <label>
+                        <input is="emby-checkbox" type="checkbox" id="ExpandHalf3D" />
+                        <span>Scale half side-by-side / top-bottom 3D to full size (fixes squeezed faces; uses video transcoding)</span>
+                    </label>
                 </div>
                 <h3>Streaming over LAN</h3>
                 <div class="inputContainer">
@@ -148,7 +154,8 @@
                     page.querySelector('#LinkLifetimeHours').value = c.LinkLifetimeHours;
                     page.querySelector('#MaxItemsPerLibrary').value = c.MaxItemsPerLibrary;
                     page.querySelector('#Show3DScene').checked = !!c.Show3DScene;
-                    page.querySelector('#SeriesView').value = c.SeriesView || 'Folders';
+                    page.querySelector('#SeriesView').value = (c.SeriesView === 'Off') ? 'Off' : 'List';
+                    page.querySelector('#ExpandHalf3D').checked = c.ExpandHalf3D !== false;
                     page.querySelector('#LanBaseUrl').value = c.LanBaseUrl || '';
                     page.querySelector('#LanMode').value = c.LanMode || 'Auto';
                     page.querySelector('#LanExtraNetworks').value = c.LanExtraNetworks || '';
@@ -171,6 +178,7 @@
                     c.MaxItemsPerLibrary = parseInt(page.querySelector('#MaxItemsPerLibrary').value, 10) || 1000;
                     c.Show3DScene = page.querySelector('#Show3DScene').checked;
                     c.SeriesView = page.querySelector('#SeriesView').value;
+                    c.ExpandHalf3D = page.querySelector('#ExpandHalf3D').checked;
                     c.LanBaseUrl = page.querySelector('#LanBaseUrl').value.trim();
                     c.LanMode = page.querySelector('#LanMode').value;
                     c.LanExtraNetworks = page.querySelector('#LanExtraNetworks').value.trim();

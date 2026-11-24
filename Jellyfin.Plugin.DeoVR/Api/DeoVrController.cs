@@ -255,6 +255,19 @@ public partial class DeoVrController : ControllerBase
         var expiry = StreamExpiry(item);
         var (streamBase, viaLan) = StreamBaseUrl();
         baseUrl = streamBase;
+        if (Config.ExpandHalf3D && IsHalf3D(video, stereoMode))
+        {
+            // Full-size picture per eye (made by Jellyfin's transcoder), always with AAC audio.
+            result.Encodings.Add(new DeoVrEncoding
+            {
+                Name = "Jellyfin (full-size 3D)",
+                VideoSources = new List<DeoVrVideoSource>
+                {
+                    new() { Resolution = height, Url = HlsUrl(baseUrl, item.Id, userId.Value, expiry, "x") }
+                }
+            });
+        }
+
         if (OfferHls(video))
         {
             result.Encodings.Add(new DeoVrEncoding
@@ -442,7 +455,7 @@ public partial class DeoVrController : ControllerBase
             List<Video> videos;
             try
             {
-                if (Config.SeriesView != "List")
+                if (Config.SeriesView == "Folders-Experimental")
                 {
                     // One tile per series; opening it lists the seasons (see GetSeries).
                     seriesList = view.GetItemList(new InternalItemsQuery(user)
@@ -463,7 +476,7 @@ public partial class DeoVrController : ControllerBase
                     (ItemSortBy.ParentIndexNumber, SortOrder.Ascending),
                     (ItemSortBy.IndexNumber, SortOrder.Ascending)
                 };
-                if (seriesList.Count == 0)
+                if (seriesList.Count == 0 && Config.SeriesView != "Off")
                 {
                     episodes = view.GetItemList(epQuery).OfType<Video>().Where(IsListable).ToList();
                 }

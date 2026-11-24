@@ -63,33 +63,69 @@ public partial class DeoVrController
         _ => !OriginalIsSafe(video)
     };
 
-    private static string HlsUrl(string baseUrl, Guid itemId, Guid userId, long exp)
+    /// <summary>
+    /// Half side-by-side / half top-bottom 3D: each eye is squeezed to half width / height.
+    /// DeoVR does not stretch it back, so the picture looks narrow.
+    /// </summary>
+    private static bool IsHalf3D(Video video, string stereoMode)
     {
-        var sig = LinkSig("h", itemId, userId, exp);
-        return $"{baseUrl}/deovr/h/{itemId:N}/{userId:N}/{exp}/{sig}/master.m3u8";
+        if (stereoMode == "off")
+        {
+            return false;
+        }
+
+        if (video.Video3DFormat is Video3DFormat.HalfSideBySide or Video3DFormat.HalfTopAndBottom)
+        {
+            return true;
+        }
+
+        var name = System.IO.Path.GetFileNameWithoutExtension(video.Path ?? string.Empty).ToLowerInvariant();
+        return Regex.IsMatch(name, @"(^|[^a-z])(hsbs|htab|hou|half[-_ ]?sbs|half[-_ ]?(tab|ou))([^a-z]|$)");
+    }
+
+    /// <summary>Signed HLS address. "h" = normal, "x" = half 3D expanded to full size.</summary>
+    private static string HlsUrl(string baseUrl, Guid itemId, Guid userId, long exp, string kind = "h")
+    {
+        var sig = LinkSig(kind, itemId, userId, exp);
+        return $"{baseUrl}/deovr/{kind}/{itemId:N}/{userId:N}/{exp}/{sig}/master.m3u8";
     }
 
     [AllowAnonymous]
     [HttpGet("h/{itemId}/{u}/{e}/{sig}/{**path}")]
     [HttpHead("h/{itemId}/{u}/{e}/{sig}/{**path}")]
-    public async Task<IActionResult> Hls(
+    public Task<IActionResult> Hls(
         [FromRoute] Guid itemId,
         [FromRoute] Guid u,
         [FromRoute] long e,
         [FromRoute] string sig,
         [FromRoute] string path,
         CancellationToken cancellationToken)
+        => ProxyHls("h", itemId, u, e, sig, path, cancellationToken);
+
+    [AllowAnonymous]
+    [HttpGet("x/{itemId}/{u}/{e}/{sig}/{**path}")]
+    [HttpHead("x/{itemId}/{u}/{e}/{sig}/{**path}")]
+    public Task<IActionResult> HlsExpanded3D(
+        [FromRoute] Guid itemId,
+        [FromRoute] Guid u,
+        [FromRoute] long e,
+        [FromRoute] string sig,
+        [FromRoute] string path,
+        CancellationToken cancellationToken)
+        => ProxyHls("x", itemId, u, e, sig, path, cancellationToken);
+
+    private async Task<IActionResult> ProxyHls(string kind, Guid itemId, Guid u, long e, string sig, string path, CancellationToken cancellationToken)
     {
-        if (!VerifyLink("h", itemId, u, e, sig))
+        if (!VerifyLink(kind, itemId, u, e, sig))
         {
-            Trace("hls", "403 missing, wrong or expired signature");
+            Trace(kind + "ls", "403 missing, wrong or expired signature");
             return StatusCode(403);
         }
 
         path ??= string.Empty;
         if (!AllowedHlsPath.IsMatch(path))
         {
-            Trace("hls", "404 path not allowed");
+            Trace(kind + "ls", "404 path not allowed");
             return NotFound();
         }
 
@@ -97,13 +133,13 @@ public partial class DeoVrController
         var item = _libraryManager.GetItemById(itemId);
         if (user is null || !IsUserAllowed(user))
         {
-            Trace("hls", "403 user not allowed");
+            Trace(kind + "ls", "403 user not allowed");
             return StatusCode(403);
         }
 
         if (item is not Video video || !item.IsVisibleStandalone(user) || !IsPlayableFile(video))
         {
-            Trace("hls", "404 item not found, not visible or file missing");
+            Trace(kind + "ls", "404 item not found, not visible or file missing");
             return NotFound();
         }
 
@@ -127,6 +163,25 @@ public partial class DeoVrController
             query["TranscodingMaxAudioChannels"] = "2";
             query["EnableAdaptiveBitrateStreaming"] = "false";
             query["BreakOnNonKeyFrames"] = "false";
+
+            if (kind == "x")
+            {
+                // Scale the squeezed half-3D picture back to full size (e.g. 1920x1080 HSBS -> 3840x1080).
+                var vs = video.GetMediaStreams().FirstOrDefault(x => x.Type == MediaStreamType.Video);
+                var w = vs?.Width ?? 1920;
+                var h = vs?.Height ?? 1080;
+                var topBottom = video.Video3DFormat == Video3DFormat.HalfTopAndBottom
+                    || DetectProjection(video).StereoMode == "tb";
+                var (tw, th) = topBottom ? (w, h * 2) : (w * 2, h);
+                query["VideoCodec"] = "h264,hevc";
+                query["EnableAutoStreamCopy"] = "false";
+                query["AllowVideoStreamCopy"] = "false";
+                query["Width"] = tw.ToString(System.Globalization.CultureInfo.InvariantCulture);
+                query["Height"] = th.ToString(System.Globalization.CultureInfo.InvariantCulture);
+                query["MaxWidth"] = query["Width"];
+                query["MaxHeight"] = query["Height"];
+                query["VideoBitRate"] = "25000000";
+            }
         }
         else
         {
@@ -157,7 +212,7 @@ public partial class DeoVrController
 
         if (!response.IsSuccessStatusCode)
         {
-            Trace("hls " + path.Split('/')[0], $"Jellyfin answered {(int)response.StatusCode}");
+            Trace(kind + "ls " + path.Split('/')[0], $"Jellyfin answered {(int)response.StatusCode}");
             _logger.LogWarning("DeoVR: HLS request {Path} for {Item} failed with {Status}", path, itemId, (int)response.StatusCode);
             return StatusCode((int)response.StatusCode);
         }
@@ -176,7 +231,7 @@ public partial class DeoVrController
                 .Replace("?\r\n", "\r\n", StringComparison.Ordinal)
                 .Replace("?\n", "\n", StringComparison.Ordinal)
                 .Replace("?\"", "\"", StringComparison.Ordinal);
-            Trace("hls " + path, "playlist sent");
+            Trace(kind + "ls " + path, "playlist sent");
             Response.Headers["Cache-Control"] = "no-store";
             return Content(text, "application/vnd.apple.mpegurl", Encoding.UTF8);
         }
