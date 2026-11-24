@@ -141,11 +141,12 @@ public partial class DeoVrController
 
         query.Remove("api_key");
         query.Remove("ApiKey");
-        query["api_key"] = apiKey;
 
         var target = QueryHelpers.AddQueryString($"{InternalBaseUrl()}/Videos/{itemId:N}/{path}", query);
 
         using var upstream = new HttpRequestMessage(Request.Method == "HEAD" ? HttpMethod.Head : HttpMethod.Get, target);
+        // Jellyfin 12 only accepts the legacy api_key query parameter with legacy authorization enabled.
+        upstream.Headers.TryAddWithoutValidation("Authorization", $"MediaBrowser Token=\"{apiKey}\"");
         if (Request.Headers.TryGetValue("Range", out var range))
         {
             upstream.Headers.TryAddWithoutValidation("Range", range.ToString());
