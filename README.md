@@ -13,7 +13,7 @@ Watch your Jellyfin library in [DeoVR](https://deovr.com): regular movies on a 2
 - Requires Jellyfin **12.4** or newer (.NET 10).
 - The original file is streamed with HTTP range support. When DeoVR cannot play it (MKV, or audio such as EAC3, DTS, TrueHD), an extra stream with AAC stereo audio is offered via Jellyfin's own transcoder (HLS, video copied when possible). Setting: *Audio conversion* (Auto / Always / Never).
 - TV shows are off by default. When enabled (*Show TV shows*), each library gets one tab with all episodes, sorted by series, season and episode.
-- Half side-by-side / top-bottom 3D (HSBS, HTAB): an extra stream scaled to full size per eye, so faces are not squeezed (uses Jellyfin video transcoding; can be turned off).
+- Half side-by-side / top-bottom 3D (HSBS, HTAB): an extra stream scaled to full size per eye, so faces are not squeezed (uses Jellyfin video transcoding; can be turned off). Detected from Jellyfin's 3D format, the file name (hsbs/htab) or, for plain "SBS"/"TB", the frame size (SBS up to 2560 px wide, TB up to 1440 px high counts as half). Override per item with the tags `deovr-half` / `deovr-full`.
 - Streaming over LAN: optional LAN address for video streams of players in your network, so they do not go through the internet / reverse proxy.
 
 ## Installation

@@ -74,13 +74,43 @@ public partial class DeoVrController
             return false;
         }
 
+        // Manual override per item: Jellyfin tags "deovr-half" / "deovr-full".
+        foreach (var tag in video.Tags ?? Array.Empty<string>())
+        {
+            switch (tag.Trim().ToLowerInvariant())
+            {
+                case "deovr-half": return true;
+                case "deovr-full": return false;
+            }
+        }
+
         if (video.Video3DFormat is Video3DFormat.HalfSideBySide or Video3DFormat.HalfTopAndBottom)
         {
             return true;
         }
 
         var name = System.IO.Path.GetFileNameWithoutExtension(video.Path ?? string.Empty).ToLowerInvariant();
-        return Regex.IsMatch(name, @"(^|[^a-z])(hsbs|htab|hou|half[-_ ]?sbs|half[-_ ]?(tab|ou))([^a-z]|$)");
+        if (Regex.IsMatch(name, @"(^|[^a-z])(fsbs|ftab|fou|full[-_ ]?sbs|full[-_ ]?(tab|ou))([^a-z]|$)"))
+        {
+            return false;
+        }
+
+        if (Regex.IsMatch(name, @"(^|[^a-z])(hsbs|htab|hou|half[-_ ]?sbs|half[-_ ]?(tab|ou))([^a-z]|$)"))
+        {
+            return true;
+        }
+
+        // Plain "SBS"/"TB" without half/full: decide by frame size. A full-size side-by-side movie is
+        // at least ~3840 wide (two full pictures); 1920x1080 or 1920x804 SBS means half width per eye.
+        var vs = video.GetMediaStreams().FirstOrDefault(x => x.Type == MediaStreamType.Video);
+        var w = vs?.Width ?? video.Width;
+        var h = vs?.Height ?? video.Height;
+        if (w <= 0 || h <= 0)
+        {
+            return false;
+        }
+
+        return stereoMode == "tb" ? h <= 1440 : w <= 2560;
     }
 
     /// <summary>Signed HLS address. "h" = normal, "x" = half 3D expanded to full size.</summary>
