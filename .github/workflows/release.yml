@@ -1,0 +1,65 @@
+name: Release
+
+# Push a tag (e.g. v1.0.0) -> build, GitHub release with zip, update manifest.json on main
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+env:
+  TARGET_ABI: '12.4.0.0'
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Build
+        id: build
+        run: |
+          set -euo pipefail
+          VERSION="${GITHUB_REF_NAME#v}.0"            # v1.0.0 -> 1.0.0.0
+          ZIP="deovr_${VERSION}.zip"
+          dotnet publish Jellyfin.Plugin.DeoVR/Jellyfin.Plugin.DeoVR.csproj -c Release -o out \
+            -p:AssemblyVersion="$VERSION" -p:FileVersion="$VERSION" -p:Version="$VERSION"
+          mkdir pkg
+          cp out/Jellyfin.Plugin.DeoVR.dll pkg/
+          python3 scripts/manifest.py meta --version "$VERSION" --abi "$TARGET_ABI" > pkg/meta.json
+          (cd pkg && zip -q "../$ZIP" *)
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "zip=$ZIP" >> "$GITHUB_OUTPUT"
+          echo "md5=$(md5sum "$ZIP" | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+
+      - name: GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" "${{ steps.build.outputs.zip }}" \
+            --title "$GITHUB_REF_NAME" --generate-notes
+
+      - name: Update manifest.json on main
+        run: |
+          set -euo pipefail
+          git fetch origin main
+          git checkout main
+          python3 scripts/manifest.py update \
+            --version "${{ steps.build.outputs.version }}" \
+            --abi "$TARGET_ABI" \
+            --url "https://github.com/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}/${{ steps.build.outputs.zip }}" \
+            --md5 "${{ steps.build.outputs.md5 }}" \
+            --changelog "Release ${GITHUB_REF_NAME}" \
+            --owner "${GITHUB_REPOSITORY_OWNER}"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add manifest.json
+          git commit -m "manifest: ${{ steps.build.outputs.version }}"
+          git push origin main

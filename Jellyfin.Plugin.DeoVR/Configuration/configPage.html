@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <title>DeoVR</title>
+</head>
+<body>
+<div id="DeoVrConfigPage" data-role="page" class="page type-interior pluginConfigurationPage" data-require="emby-input,emby-button,emby-checkbox">
+    <div data-role="content">
+        <div class="content-primary">
+            <h2>DeoVR</h2>
+            <form id="DeoVrConfigForm">
+                <div class="inputContainer">
+                    <input is="emby-input" type="text" id="PublicBaseUrl" label="Public base URL" />
+                    <div class="fieldDescription">e.g. https://jellyfin.example.com – leave empty to derive it from the request. Recommended when running behind a reverse proxy.</div>
+                </div>
+                <div class="inputContainer">
+                    <input is="emby-input" type="text" id="AnonymousUserName" label="Anonymous user (optional)" />
+                    <div class="fieldDescription">Jellyfin user name used for requests to /deovr without login. Leave empty to require login or a feed link. Only use on trusted networks.</div>
+                </div>
+                <div class="inputContainer">
+                    <input is="emby-input" type="number" id="LinkLifetimeHours" min="1" label="Library link lifetime (hours)" />
+                    <div class="fieldDescription">How long links in a loaded library stay valid. Stream links always expire after the video runtime + 2 hours.</div>
+                </div>
+                <div class="inputContainer">
+                    <input is="emby-input" type="number" id="MaxItemsPerLibrary" min="1" label="Max. items per library" />
+                </div>
+                <div class="checkboxContainer">
+                    <label>
+                        <input is="emby-checkbox" type="checkbox" id="Show3DScene" />
+                        <span>Show an extra "3D" tab with all stereoscopic videos</span>
+                    </label>
+                </div>
+                <div class="inputContainer">
+                    <input is="emby-input" type="text" id="SigningSecret" label="Signing secret" />
+                    <div class="fieldDescription">Changing it invalidates all feed links and all active stream links.</div>
+                </div>
+                <button is="emby-button" type="submit" class="raised button-submit block emby-button">
+                    <span>Save</span>
+                </button>
+            </form>
+
+            <h3 style="margin-top:2em">Personal feed links</h3>
+            <div class="fieldDescription">Open the link of a user in the DeoVR browser and bookmark it. Treat it like a password.</div>
+            <div id="DeoVrLinks"></div>
+        </div>
+    </div>
+
+    <script type="text/javascript">
+        (function () {
+            var pluginId = '9a2a70e4-4266-4a9e-b694-ea6036068502';
+            var page = document.querySelector('#DeoVrConfigPage');
+
+            function renderLinks(list) {
+                var box = page.querySelector('#DeoVrLinks');
+                box.innerHTML = '';
+                (list || []).forEach(function (x) {
+                    var row = document.createElement('div');
+                    row.style.margin = '.5em 0';
+                    var b = document.createElement('b');
+                    b.textContent = x.user + ': ';
+                    var c = document.createElement('code');
+                    c.textContent = x.url;
+                    c.style.userSelect = 'all';
+                    row.appendChild(b);
+                    row.appendChild(c);
+                    box.appendChild(row);
+                });
+            }
+
+            page.addEventListener('pageshow', function () {
+                Dashboard.showLoadingMsg();
+                ApiClient.getPluginConfiguration(pluginId).then(function (c) {
+                    page.querySelector('#PublicBaseUrl').value = c.PublicBaseUrl || '';
+                    page.querySelector('#AnonymousUserName').value = c.AnonymousUserName || '';
+                    page.querySelector('#LinkLifetimeHours').value = c.LinkLifetimeHours;
+                    page.querySelector('#MaxItemsPerLibrary').value = c.MaxItemsPerLibrary;
+                    page.querySelector('#Show3DScene').checked = !!c.Show3DScene;
+                    page.querySelector('#SigningSecret').value = c.SigningSecret || '';
+                    Dashboard.hideLoadingMsg();
+                });
+                ApiClient.getJSON(ApiClient.getUrl('deovr/admin/links')).then(renderLinks);
+            });
+
+            page.querySelector('#DeoVrConfigForm').addEventListener('submit', function (e) {
+                e.preventDefault();
+                Dashboard.showLoadingMsg();
+                ApiClient.getPluginConfiguration(pluginId).then(function (c) {
+                    c.PublicBaseUrl = page.querySelector('#PublicBaseUrl').value.trim();
+                    c.AnonymousUserName = page.querySelector('#AnonymousUserName').value.trim();
+                    c.LinkLifetimeHours = parseInt(page.querySelector('#LinkLifetimeHours').value, 10) || 24;
+                    c.MaxItemsPerLibrary = parseInt(page.querySelector('#MaxItemsPerLibrary').value, 10) || 1000;
+                    c.Show3DScene = page.querySelector('#Show3DScene').checked;
+                    c.SigningSecret = page.querySelector('#SigningSecret').value.trim() || c.SigningSecret;
+                    ApiClient.updatePluginConfiguration(pluginId, c).then(function (r) {
+                        Dashboard.processPluginConfigurationUpdateResult(r);
+                        ApiClient.getJSON(ApiClient.getUrl('deovr/admin/links')).then(renderLinks);
+                    });
+                });
+                return false;
+            });
+        })();
+    </script>
+</div>
+</body>
+</html>
