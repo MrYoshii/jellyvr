@@ -3,6 +3,14 @@
     "guid": "9a2a70e4-4266-4a9e-b694-ea6036068502",
     "versions": [
       {
+        "version": "1.0.1.0",
+        "changelog": "Release v1.0.1",
+        "targetAbi": "12.4.0.0",
+        "sourceUrl": "https://github.com/MrYoshii/jellyvr/releases/download/v1.0.1/deovr_1.0.1.0.zip",
+        "checksum": "fa1abcc6f6450f1357aac8bb9cc3d62b",
+        "timestamp": "2026-11-24T18:37:18Z"
+      },
+      {
         "version": "1.0.0.0",
         "changelog": "Release v1.0.0",
         "targetAbi": "12.4.0.0",
